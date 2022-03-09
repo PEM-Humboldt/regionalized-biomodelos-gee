@@ -1,0 +1,376 @@
+// sp es la especie que se quiere modelar 
+var sp = 'Sciurus granatensis';
+
+// aream es el area de estudio que se quiere modelar (Magdalena Medio, Rio Tillava, Piedemonte Meta, Piedemonte Casanare)
+var aream = 'Magdalena Medio'  ;
+
+// var sp_ cambia los espacios por '_'
+var sp_ =  sp.replace(' ', '_');
+
+// areaM_ elimina el espacio en el nombre del area
+var areaM_ =aream.replace(' ','');
+
+// areaM filtra el area de estudio, a solo aquella area indicada (para Piedemonte Casanare toca poner solo Piedemonte en el lugar
+// de aream -solamente en esta linea de codigo-)
+var areaM = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/inputs/areas_estudio').filterMetadata('Name','equals',aream);
+
+// datos es la tabla con los registros de fototrampeo de cada area de estudio (importante nombrar el archivo de registros en 
+//el formato "MagdalenaMedio_especies"), estos resgistros deben ser puntos, necesitan el nombre de la especie, 
+//y la fecha en formato "2020-12-16"  
+var datos = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/inputs/'+areaM_+'_especies');
+
+// datos filtra de la tabla 'datos' solo aquellos registros de la especie
+var datos = datos.filterMetadata('scientificName', 'equals', sp);
+
+// arearare es el numero en METROS, del buffer para rarefaccion
+var arearare = 250 ;
+
+// Date_End es la fecha actual // verificar fecha actual al primero del mes actual
+var Date_End = ee.Date('2022-05-01');
+
+// colombia es una variable que contiene el limitie politico del pais, extraido del catalogo de GEE
+var colombia =ee.Feature(ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017')  
+.filter(ee.Filter.eq('country_na','Colombia')).union().first()).geometry();
+
+
+/*
+la funcion interpolar toma como dato de entrada una imagen tipo raster
+  var img = es la imagen a utilizar
+  var masked = crea una mascara de los pixeles vacios de la imagen
+  var source = enmascara los pixeles vacios
+  var cost0 = calcula el costo acumulado para los pixeles vacios
+  var cost1 = calcula el costo acumulado para los pixeles con informacion
+  var cost2 = desenmascara los pixeles emascarados en 'source' y calcula el costo acumulado
+  var fill = determina los valores de los pixeles mas cercacnos para rellenar la imagen
+  var filled = rellena la imagen en donde sus pixeles estan vacios
+  return la funcion entrega la imagen sin vacios
+*/
+function interpolar(image){
+  var img = image;
+  var masked = img.updateMask(img.neq(0));
+  var source = masked.mask();
+  var cost0 = ee.Image(100).where(source, 0).cumulativeCost(source, 10000);
+  var cost1 = ee.Image(100).where(source, 1).cumulativeCost(source, 10000);
+  var cost2 = masked.unmask(100).cumulativeCost(source, 10000);
+  var fill = cost2.subtract(cost0).divide(cost1.subtract(cost0)).round();
+  var filled = masked.unmask(0).add(fill);
+  return filled;
+}
+  
+// la funcion make_datelist crea nuevas fechas a partir de un numero entero 'n'
+// return entrega una nueva fecha avanzando 'n' cantidad de meses
+function make_datelist (n) {
+  return ee.Date(fecha).advance(n,'month').format();
+}
+
+/*
+las funciones ausencia y prescencia asignan un valor de 0 o 1 (segun corresponda)
+al registro, ese valor queda asignado en la nueva columna 'prescencia' 
+*/
+function ausencia(feature) {
+    return feature.set({prescencia: 0})}
+function prescencia(feature) {
+    return feature.set({prescencia: 1})}
+  
+/*
+la funcion reFechar tiene como dato de entrada un registro
+  var date = lee -como formato Date- la fecha del registro (que esta en formato texto)
+  return entrega el registro con la fecha actualizada en el formato Date
+*/
+function reFechar(feat){
+  var date = ee.Date(ee.String(feat.get("timestamp")).slice(0,10));
+  return feat.set({"system:time_start": date});
+}
+  
+// la funcion reUbicar crea features (registros) a partir del centroide de una geometria 'g'
+function reUbicar(g){return ee.Feature(g).centroid(0)}
+
+// la funcion areaM crea un buffer de 30 km al rededor de cada registro
+function areaMbuff(feat){return feat.buffer(30000)}
+
+// la funcion areaPres crea un buffer de 10 km al rededor de cada registro
+function areaPres(feat){return feat.buffer(10000)}
+
+/*
+la funcion iter evuala la rarefaccion
+  var pre = selecciona todos los registros anteiores al regisro evaluado
+  var num = selecciona el regisro evaluado
+  var buffer = crea un buffer al rededor del registro (del tamañao arearare)
+    para determinar si hay o no registros en el mismo espacio
+  var inter = evalua si los registros anteriores se intersectan con el buffer
+  var condi = es un condicional para conservan los registros que no intersectan
+  var aggre = aggrega el nuevo registro a la lista de registros evaluados
+  return deuelve un multipunto con todos los puntos rarificados
+*/
+function iter(feat, anterior){  
+  var pre = ee.Feature(ee.List(anterior).get(-1));
+  var num = ee.Feature(feat);
+  var buffer = num.buffer(arearare);
+  var inter = pre.intersects(buffer);
+  var condi = ee.Algorithms.If(inter, geometry, num);
+  var aggre = ee.Feature(condi).union(pre);
+  return ee.List(anterior).add(aggre);
+}
+
+/*
+la funcion mosaic crea mosaicos de imagenes modis sin vacios cada mes,
+  var i = es un numero
+  var inicio = selecciona la fecha (de una lista de fechas) que corresponde
+    a la posicion indicada en 'i'
+  var final = selecciona la fecha siguiente a la fecha de 'inicio'
+  var NDVIimg = selecciona todas las imagenes modis correspondientes al rango
+    de fechas abarcado entre 'inicio' y 'final', escoje solamente la banda NDVI,
+    les ejecuta la funcion 'interpolar', saca la mediana, y recorta la imagen al
+    colombia
+  var NDVI = escoje todos los pixeles donde 'NDVIimg' es menor a 0 y los iguala a 0
+  var EVIimg = selecciona todas las imagenes modis correspondientes al rango
+    de fechas abarcado entre 'inicio' y 'final', escoje solamente la banda EVI,
+    les ejecuta la funcion 'interpolar', saca la mediana, y recorta la imagen al
+    colombia
+  var EVI = escoje todos los pixeles donde 'EVIimg' es menor a 0 y los iguala a 0
+  var sur_refl_b01 = selecciona todas las imagenes modis correspondientes al rango
+    de fechas abarcado entre 'inicio' y 'final', escoje solamente la banda sur_refl_b01,
+    les ejecuta la funcion 'interpolar', saca la mediana, y recorta la imagen al
+    colombia
+  var sur_refl_b02 = selecciona todas las imagenes modis correspondientes al rango
+    de fechas abarcado entre 'inicio' y 'final', escoje solamente la banda sur_refl_b02,
+    les ejecuta la funcion 'interpolar', saca la mediana, y recorta la imagen al
+    colombia
+  var sur_refl_b03 = selecciona todas las imagenes modis correspondientes al rango
+    de fechas abarcado entre 'inicio' y 'final', escoje solamente la banda sur_refl_b03,
+    les ejecuta la funcion 'interpolar', saca la mediana, y recorta la imagen al
+    colombia
+  var sur_refl_b07 = selecciona todas las imagenes modis correspondientes al rango
+    de fechas abarcado entre 'inicio' y 'final', escoje solamente la banda sur_refl_b07,
+    les ejecuta la funcion 'interpolar', saca la mediana, y recorta la imagen al
+    colombia
+  var dem = interpola el DEM y estandariza las altitudes entre 0-5700 
+    a una escala de 0-10000
+  var modis = toma cada una de las anteriores imagenes monobanda y las une en una nueva
+    imagen mutibanda
+  var nombre = crea un nombre para la imagen multibanda, que coincida con la fecha en 'inicio'
+return devuelve la nueva imagen multibanda con su nuevo nombre asignado
+*/
+function mosaic(numero){
+  var i = ee.Number(numero);
+  var inicio = fechas_modis.get(i);
+  var final = fechas_modis.get(i.add(1));
+  var NDVIimg = ee.Image((ee.ImageCollection('MODIS/006/MOD13Q1')
+              .select('NDVI')
+              .filterDate(inicio, final)
+              .map(interpolar)).median().clip(colombia));
+  var NDVI = NDVIimg.where(NDVIimg.lt(0), 0);
+  var EVIimg = ee.Image((ee.ImageCollection('MODIS/006/MOD13Q1')
+              .select('EVI')
+              .filterDate(inicio, final)
+              .map(interpolar)).median().clip(colombia));
+  var EVI = EVIimg.where(EVIimg.lt(0), 0);
+  var sur_refl_b01 = ee.Image((ee.ImageCollection('MODIS/006/MOD13Q1')
+              .select('sur_refl_b01')
+              .filterDate(inicio, final)
+              .map(interpolar)).median().clip(colombia));
+              
+  var sur_refl_b02 = ee.Image((ee.ImageCollection('MODIS/006/MOD13Q1')
+              .select('sur_refl_b02')
+              .filterDate(inicio, final)
+              .map(interpolar)).median().clip(colombia));
+
+  var sur_refl_b03 = ee.Image((ee.ImageCollection('MODIS/006/MOD13Q1')
+              .select('sur_refl_b03')
+              .filterDate(inicio, final)
+              .map(interpolar)).median().clip(colombia));
+
+  var sur_refl_b07 = ee.Image((ee.ImageCollection('MODIS/006/MOD13Q1')
+              .select('sur_refl_b07')
+              .filterDate(inicio, final)
+              .map(interpolar)).median().clip(colombia));
+  var a1 =ee.Image("MERIT/DEM/v1_0_3");
+  var dem = (interpolar(a1).clip(colombia)).expression(
+      '((x-min_x)/(max_x-min_x))*10000', {
+        'x': a1.select(0) ,
+        'min_x': 0,
+        'max_x': 5700}); 
+  var modis = NDVI.addBands(EVI.addBands(sur_refl_b01.addBands(sur_refl_b02.addBands(sur_refl_b03.addBands(sur_refl_b07.addBands(dem))))));
+  var nombre = ee.String("modis_").cat(ee.String(inicio).replace('-','_').slice(0,7));
+
+return modis.set({id:nombre});
+}
+
+// la funcion obtener_fecha toma una imagen multibanda, selecciona
+// y entrega su nombre (que incluye su fecha)
+function obtener_fecha(im){
+  var img = ee.Image(im);
+  var id = img.get('id');
+  return id;
+}
+
+/*
+la funcion entrenamiento extrae los datos multitemporales
+  var i = es un numero 
+  var inicio = extrae la fecha correspondiente a numero de indice 'i' de una lista de 
+    fechas 'valiDates'
+  var final = es la fecha un mes siguiente a la fecha de 'inicio'
+  var fechaOBS = toma la fecha de 'inicio' y elimina los '-'
+  var imgOBS = crea un a imagen con el numero de la fecha 
+  var pun = selecciona los registros que caen dentro del rango de fechas 
+  var len = calcula el numero de registros en 'pun'
+  var flag = evalua si para la fecha en cuestion hay 0 registros
+  var condi = es un condicional para separar los meses sin registros
+  var points = convierte los puntos seleccionados como una FeatureCollection
+  var first = crea una lista vacia
+  var  list = devuelve los puntos en 'points' como una lista 
+  var pre = selecciona un punto en oceania
+  var num = selecciona el primer punto de la lista 'list'
+  var buffer = crea un area para evaluar rarefaccion
+  var inter = evalua si el punto de oceania se intersecta con el registro
+  var condi = escoje el punto del registro
+  var aggre = une el punto de oceania con el punto del registro
+  var first = crea un multipunto de ambos puntos
+  var texto = toma la fecha de inicio y le añade el prefijo modis_
+  var index = busca en una lista 'ids' el indice que coincide con el 'texto'
+  var modis = selecciona la imagen modis, que coinicde con la fecha, y 
+    le añade la fecha creada en 'imgOBS'
+  var resulting_list ejecuta la funcion 'iter' de forma iterativa
+  var multiRARE = selecciona el multipunto que contiene todos los puntos rarificados
+  var clean = divide el multipunto en puntos individuales y elimina los puntos en oceania
+  var area = ejecuta la funcion 'areaM' con los puntos rarifiacos
+  var areadiff = crea un area para generar puntos aletorios de ausencias entre 10-30 km fuera del registro
+  var ranDots = crea puntos aleatorios en el ara definida
+  var regPre = ejecuta la funcion de 'presencia' en los registros
+  var regAus = ejecuta la funcion de ausencia en los puntos aleatorios
+  var train = une los puntos de 'regPre' con los de 'regAus'
+  var training = extrae los valores de la imagen modis correspondiente con los 
+    registros de la fecha indicada
+return devuelve los puntos como una lista
+*/
+function entrenamiento(numero){
+  var i = ee.Number(numero);
+  var inicio = valiDates.get(i);
+  var final = valiDates.get(i.add(1));
+
+  var fechaOBS = ee.Number.parse(ee.String(inicio).replace('-','').replace('-','').slice(0,8));
+  var imgOBS = ee.Image(ee.Number(fechaOBS).multiply(1)).rename('date');
+
+  var pun = puntosDate.filter(ee.Filter.date(inicio, final));
+  var len = pun.size();
+  var flag = ee.Algorithms.IsEqual(len, 0);
+  var condi = ee.Algorithms.If(flag, 
+    pun.merge(ee.FeatureCollection(geometry1)),
+    pun) ;
+  var points = ee.FeatureCollection(condi);
+
+  var first = ee.List([]);
+  var list = points.toList(points.size());
+
+  var pre = ee.Feature(ee.List([geometry]).get(0));
+  var num = ee.Feature(ee.List(list).get(0));
+  var buffer = num.buffer(arearare);
+  var inter = pre.intersects(buffer);
+  var condi = ee.Algorithms.If(inter, null, num);
+  var aggre = ee.Feature(condi).union(pre);
+  var first = first.add(aggre);
+
+  var texto = ee.String('modis_').cat(ee.String(inicio).replace('-','_')).slice(0,13);
+  var index = ids.indexOf(texto);
+  var modis = ee.Image(modis_interpolado.get(index)).addBands(imgOBS);
+
+  var resulting_list = ee.List(list.iterate(iter, first));
+  var multiRARE =ee.Feature(resulting_list.get(-1));
+
+  var clean =ee.FeatureCollection((multiRARE.geometry().geometries().map(reUbicar))).filterBounds(colombia);
+
+  var area = areaM.map(areaMbuff);
+  var areadiff = ee.Feature(area.union().first()).difference(ee.Feature((clean.map(areaPres)).union().first()));
+  var ranDots = ee.FeatureCollection.randomPoints(areadiff.geometry(),NUMausencias);
+
+  var regPre = clean.map(prescencia);
+  var regAus = ranDots.map(ausencia);
+  var train = regPre.merge(regAus);
+
+  var training = modis.sampleRegions({
+    collection: train,
+    properties: ['prescencia'],
+    scale: 250,
+    geometries : true});
+return training.toList(train.size());
+}
+
+/*
+geometry y geometry1 son dos puntos fuera del colombia que permiten el 
+codigo correr se utilizan como coordenadas de default en caso de no tener registros
+son eliminados al final
+*/
+var geometry =   ee.Geometry.Point([137.89898228927268, -6.599435201527821]);
+var geometry1 = ee.Geometry.Point([-92.40541724044823, -34.98099007161105]);
+
+// fecha es la fecha de inicio cuando comenzo el 2020
+var fecha = '2020-01-01';
+
+// n_months determina la cantidad de meses desde el comienzo de modis hasta la actualidad
+var n_months = Date_End.difference(fecha,'month').round();
+
+// fechas_modis crea una lista de la longitud de la cantidad de meses 
+var fechas_modis = ee.List.sequence(0,n_months,1);
+
+// fechas_modis ejecuta la funcion 'make_datelist'
+fechas_modis = fechas_modis.map(make_datelist);
+
+// lista_modis crea un a lista del tamaño de 'fechas_modis'
+var lista_modis = ee.List.sequence(0,fechas_modis.size().subtract(2),1);
+
+// modis_interpolado ejecuta la funcion 'mosaic' para todos los meses
+var modis_interpolado = lista_modis.map(mosaic);
+
+// ids ejecuta la funcion 'obtener_fecha' en 'modis_interpolado'
+var ids = modis_interpolado.map(obtener_fecha);
+
+// rangos selecciona las fechas con informacion de registros
+var rangos = datos.aggregate_array('timestamp').add(fecha).map(function(string){return ee.String(string).slice(0,7)}).distinct().sort();
+
+// valiDates seleccina las fechas de rangos posteriores al inicio de modis
+var valiDates = rangos.filter(ee.Filter.gte('item', fecha)).map(function(string){return ee.String(string).slice(0,10)});
+
+// determina cuantos puntos aleatorios se asignan a cada fecha, diviendo 10000 
+// en la cantidad de fechas con registros
+var NUMausencias = ee.Number(10000).divide(rangos.size().subtract(1)).round(); 
+
+// size toma el tamaño -1 de la lista valiDates
+var size = valiDates.size();
+
+// fechaFinal detemina la ultima fehca donde hay registros
+var fechaFinal = ee.Date(valiDates.get(size.subtract(1))).advance(1,'month');
+
+// valiDates añade la 'fechaFinal' a 'valiDates'
+var valiDates = valiDates.add(fechaFinal.format().slice(0,7));
+
+// myList crea una secuencia del tamaño 'size'
+var myList = ee.List.sequence(0,size.subtract(1));
+
+// puntosDates ejecuta la funcion 'reFechar' para los 'datos'
+var puntosDate = datos.map(reFechar);
+
+// sample ejecuta la funcion entrenamiento, y devuelve los puntos entrenados 
+var sample = ee.FeatureCollection(myList.map(entrenamiento).flatten());
+
+/*
+// esta seccion de codigo, es para exportar las imagenes sobre las cuales se generaran los modelos
+// year determina la fecha de la imagen a exprotar, puede ser mes 'xxxx_xx' o año 'xxxx'
+// Modis_predict filtra las imagenes modis de la lista 'modis_interpolado' que coincide con la 
+// fecha indicada
+// export exporta la imagen a los assets
+//activar solo una vez al principio del flujo de trabajo
+var year = '2020_12'; 
+var Modis_predict = ee.ImageCollection(modis_interpolado).filterMetadata('id', "contains", year).median();
+Export.image.toAsset({
+  image: Modis_predict, 
+  description: 'modis_predict'+year, 
+  assetId: 'ecopetrol/modis_predict_'+year,
+  region: colombia, 
+  scale:250, })
+*/
+
+// export exporta los puntos entrenados de 'sample' a los assets
+Export.table.toAsset({
+  collection: sample, 
+  description: 'training_'+sp_, 
+  assetId: 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/training/foto_'+sp_+'_training'});

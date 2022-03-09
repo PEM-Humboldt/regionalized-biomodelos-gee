@@ -1,0 +1,303 @@
+// var sp contiene la especie a evaluar
+var sp = 'Momotus momota';
+
+// table contiene todas las areas de estudio
+var table = ee.FeatureCollection("users/Biomodelos_Iavh/ecopetrol/inputs/areas_estudio");
+
+// aream es el area de estudio que se quiere modelar (Magdalena Medio, Rio Tillava, Piedemonte Meta, Piedemonte Casanare)
+var aream = 'Rio Tillava'  ;
+
+// modelo, modelo2 y modelo3 son variables que contienen los nombres de los 3 algoritmos de clasificación 
+// probabilistica usados
+// estos se utilizan para visualizar como quedaria el mapa de conectividad segun cada algoritmo
+// y si todos satisfacen el umbral de fiabilidad, se usara criterio experto para escoger algoritmo
+// EL ALGORTIMO ESCOGIDO DEBERE SER COLOCADO EN LA VARIABLE MODELO
+var modelo = 'BRT'  ;
+var modelo2 = 'MaxEnt'  ;
+var modelo3 = 'RF'  ;
+
+// areaM_ elimina el espacio en el nombre del area
+var areaM_ =aream.replace(' ','');
+
+// var sp_ cambia los espacios por '_'
+var sp_  = sp.replace(' ','_').replace(' ','_');
+
+// trainingG1 filtra los registos de entrenamiento con fototrampeo para solo dejar los datos de entrenamiento con presencias
+var trainingG1 = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/training/foto_'+sp_+"_training")
+.filterMetadata('prescencia','equals',1);
+
+// index1 extrae en una lista los meses con registros de fototrampeo 
+var index1 =trainingG1.aggregate_array('date').map(function (fecha){return ee.String(fecha).slice(4,6)}).distinct()
+.sort();
+
+// trainingG2 filtra los registos de entrenamiento con fototrampeo mas todos los muestreos para solo dejar los datos de entrenamiento con presencias
+var trainingG2 = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/training/todos_'+sp_+"_training")
+.filterMetadata('prescencia','equals',1);
+
+// index1 extrae en una lista los meses con registros de fototrampeo mas los registros de otros muestreos
+var index2 =trainingG2.aggregate_array('date').map(function (fecha){return ee.String(fecha).slice(4,6)}).distinct()
+.sort();
+
+//lista1 coloca en una lista todos los 12 modelos del primer algoritmo (en 'modelo'), usando solo datos de fototrampeo
+var lista1= [ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //1
+.select(['prob_0_'+modelo+'_2020_01'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //2
+.select(['prob_1_'+modelo+'_2020_02'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //3
+.select(['prob_2_'+modelo+'_2020_03'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //4
+.select(['prob_3_'+modelo+'_2020_04'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //5
+.select(['prob_4_'+modelo+'_2020_05'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //6
+.select(['prob_5_'+modelo+'_2020_06'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //7
+.select(['prob_6_'+modelo+'_2020_07'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //8
+.select(['prob_7_'+modelo+'_2020_08'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //9
+.select(['prob_8_'+modelo+'_2020_09'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //10
+.select(['prob_9_'+modelo+'_2020_10'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //11
+.select(['prob_10_'+modelo+'_2020_11'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //12
+.select(['prob_11_'+modelo+'_2020_12'],['a'])];
+
+//listaB coloca en una lista todos los 12 modelos del segundo algoritmo (en 'modelo2'), usando solo datos de fototrampeo
+var listaB= [ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //1
+.select(['prob_0_'+modelo2+'_2020_01'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //2
+.select(['prob_1_'+modelo2+'_2020_02'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //3
+.select(['prob_2_'+modelo2+'_2020_03'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //4
+.select(['prob_3_'+modelo2+'_2020_04'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //5
+.select(['prob_4_'+modelo2+'_2020_05'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //6
+.select(['prob_5_'+modelo2+'_2020_06'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //7
+.select(['prob_6_'+modelo2+'_2020_07'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //8
+.select(['prob_7_'+modelo2+'_2020_08'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //9
+.select(['prob_8_'+modelo2+'_2020_09'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //10
+.select(['prob_9_'+modelo2+'_2020_10'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //11
+.select(['prob_10_'+modelo2+'_2020_11'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //12
+.select(['prob_11_'+modelo2+'_2020_12'],['a'])];
+
+//lista3 coloca en una lista todos los 12 modelos del tercer algoritmo (en 'modelo3'), usando solo datos de fototrampeo
+var lista3= [ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //1
+.select(['prob_0_'+modelo3+'_2020_01'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //2
+.select(['prob_1_'+modelo3+'_2020_02'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //3
+.select(['prob_2_'+modelo3+'_2020_03'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //4
+.select(['prob_3_'+modelo3+'_2020_04'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //5
+.select(['prob_4_'+modelo3+'_2020_05'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //6
+.select(['prob_5_'+modelo3+'_2020_06'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //7
+.select(['prob_6_'+modelo3+'_2020_07'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //8
+.select(['prob_7_'+modelo3+'_2020_08'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //9
+.select(['prob_8_'+modelo3+'_2020_09'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //10
+.select(['prob_9_'+modelo3+'_2020_10'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //11
+.select(['prob_10_'+modelo3+'_2020_11'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT") //12
+.select(['prob_11_'+modelo3+'_2020_12'],['a'])];
+
+//lista2 coloca en una lista todos los 12 modelos del primer algoritmo (en 'modelo3'), usando los datos de 
+// fototrampeo y registros adicionales de otros muestreos
+var lista2 = [ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //1
+.select(['prob_0_'+modelo+'_2020_01'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //2
+.select(['prob_1_'+modelo+'_2020_02'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //3
+.select(['prob_2_'+modelo+'_2020_03'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //4
+.select(['prob_3_'+modelo+'_2020_04'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //5
+.select(['prob_4_'+modelo+'_2020_05'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //6
+.select(['prob_5_'+modelo+'_2020_06'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //7
+.select(['prob_6_'+modelo+'_2020_07'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //8
+.select(['prob_7_'+modelo+'_2020_08'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //9
+.select(['prob_8_'+modelo+'_2020_09'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //10
+.select(['prob_9_'+modelo+'_2020_10'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //11
+.select(['prob_10_'+modelo+'_2020_11'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //12
+.select(['prob_11_'+modelo+'_2020_12'],['a'])];
+
+//listaA coloca en una lista todos los 12 modelos del segundo algoritmo (en 'modelo3'), usando los datos de 
+// fototrampeo y registros adicionales de otros muestreos
+var listaA = [
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //1
+.select(['prob_0_'+modelo2+'_2020_01'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //2
+.select(['prob_1_'+modelo2+'_2020_02'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //3
+.select(['prob_2_'+modelo2+'_2020_03'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //4
+.select(['prob_3_'+modelo2+'_2020_04'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //5
+.select(['prob_4_'+modelo2+'_2020_05'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //6
+.select(['prob_5_'+modelo2+'_2020_06'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //7
+.select(['prob_6_'+modelo2+'_2020_07'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //8
+.select(['prob_7_'+modelo2+'_2020_08'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //9
+.select(['prob_8_'+modelo2+'_2020_09'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //10
+.select(['prob_9_'+modelo2+'_2020_10'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //11
+.select(['prob_10_'+modelo2+'_2020_11'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //12
+.select(['prob_11_'+modelo2+'_2020_12'],['a'])];
+
+//listaC coloca en una lista todos los 12 modelos del tercer algoritmo (en 'modelo3'), usando los datos de 
+// fototrampeo y registros adicionales de otros muestreos
+var listaC = [
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //1
+.select(['prob_0_'+modelo3+'_2020_01'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //2
+.select(['prob_1_'+modelo3+'_2020_02'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //3
+.select(['prob_2_'+modelo3+'_2020_03'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //4
+.select(['prob_3_'+modelo3+'_2020_04'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //5
+.select(['prob_4_'+modelo3+'_2020_05'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //6
+.select(['prob_5_'+modelo3+'_2020_06'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //7
+.select(['prob_6_'+modelo3+'_2020_07'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //8
+.select(['prob_7_'+modelo3+'_2020_08'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //9
+.select(['prob_8_'+modelo3+'_2020_09'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //10
+.select(['prob_9_'+modelo3+'_2020_10'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //11
+.select(['prob_10_'+modelo3+'_2020_11'],['a']),
+ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/todos_"+sp_+"_MX_SVM_RF_BRT") //12
+.select(['prob_11_'+modelo3+'_2020_12'],['a'])];
+
+
+// foto calcula la mediana de los modelos (teniendo en cuenta solamente los meses con registros -index1-) 
+// del primer algoritmo en ('modelo'), (solo con datos de fototrampeo)
+var foto= ee.ImageCollection(index1.map(function(fecha) {
+  var f= ee.Number.parse(fecha).subtract(1);
+  return ee.List(lista1).get(f);
+})).median();
+
+// foto2 calcula la mediana de los modelos (teniendo en cuenta solamente los meses con registros -index1-) 
+// del segundo algoritmo en ('modelo2'), (solo con datos de fototrampeo)
+var foto2= ee.ImageCollection(index1.map(function(fecha) {
+  var f= ee.Number.parse(fecha).subtract(1);
+  return ee.List(listaB).get(f);
+})).median();
+
+// foto3 calcula la mediana de los modelos (teniendo en cuenta solamente los meses con registros -index1-) 
+// del tercer algoritmo en ('modelo3'), (solo con datos de fototrampeo)
+var foto3= ee.ImageCollection(index1.map(function(fecha) {
+  var f= ee.Number.parse(fecha).subtract(1);
+  return ee.List(lista3).get(f);
+})).median();
+
+
+// todos calcula la mediana de los modelos (teniendo en cuenta solamente los meses con registros -index2-) 
+// del primer algoritmo en ('modelo'), (con datos de fototrampeo y registros adicionales de otros muestreos)
+var todos= ee.ImageCollection(index2.map(function(fecha) {
+  var f= ee.Number.parse(fecha).subtract(1);
+  return ee.List(lista2).get(f);
+})).median();
+
+// todos2 calcula la mediana de los modelos (teniendo en cuenta solamente los meses con registros -index2-) 
+// del segundo algoritmo en ('modelo2'), (con datos de fototrampeo y registros adicionales de otros muestreos)
+var todos2= ee.ImageCollection(index2.map(function(fecha) {
+  var f= ee.Number.parse(fecha).subtract(1);
+  return ee.List(listaA).get(f);
+})).median();
+
+// todos3 calcula la mediana de los modelos (teniendo en cuenta solamente los meses con registros -index2-) 
+// del tercer algoritmo en ('modelo3'), (con datos de fototrampeo y registros adicionales de otros muestreos)
+var todos3= ee.ImageCollection(index2.map(function(fecha) {
+  var f= ee.Number.parse(fecha).subtract(1);
+  return ee.List(listaC).get(f);
+})).median();
+
+//empty crea una imagen vacia
+var empty = ee.Image().byte();
+
+//col dibuja el area de estuido sobre la imagen vacia
+var col = empty.paint({featureCollection: table, color: "0000ff", width: 1});
+
+//los siguientes comandos muestran en el panel de mapas las medianas de los modelos de fototrampeo y los que tiene registros adicionales 
+Map.addLayer(foto.mask(foto.neq(0)), {min:0, max:100,palette:['000000','59FF00']}, modelo+' FOTO', true);
+Map.addLayer(foto2.mask(foto2.neq(0)), {min:0, max:100,palette:['000000','59FF00']},modelo2+' foto 2', true);
+Map.addLayer(foto3.mask(foto3.neq(0)), {min:0, max:100,palette:['000000','59FF00']},modelo3+' foto 3', true);
+Map.addLayer(todos.mask(todos.neq(0)), {min:0, max:100,palette:['000000','59FF00']},modelo+' TODOS', true);
+Map.addLayer(todos2.mask(todos2.neq(0)), {min:0, max:100,palette:['000000','59FF00']},modelo2+' todos 2', true);
+Map.addLayer(todos3.mask(todos3.neq(0)), {min:0, max:100,palette:['000000','59FF00']},modelo3+' todos 3', true);
+Map.addLayer(col,{palette: "ff00c8"},'area de interes', true);
+
+// los siguientes comandos despliegan los puntos donde se ubican los registrso usados (tanto fototramepo, como con registros adicionales)
+Map.addLayer(trainingG1,{color:'FF3333'}, 'registros Foto', true);
+Map.addLayer(trainingG2,{color:'333CFF'}, 'registros Todos', true);
+
+// poli llama un modelo cualquiera (de la especie en cuestion), y determina la extension del modelo
+var poli = ee.Image("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/probabilistico/foto_"+sp_+"_MX_SVM_RF_BRT").geometry();
+
+// estos dos comandos imprimen en la consola a los meses que se calculo la mediana
+print('meses con registros de fototrampeo',index1);
+print('meses con registros adicionales',index2);
+
+// aca se decide si se escoje el modelo de foto tampreo escribiendo 'foto' o si se escoje el modelo de registros adicionales, escribiento 'todos'
+// ademas se debe cambiar en la variable F para que el modelo se guarde con el nombre correcto
+var final =  todos //  foto
+var f = "_todos_"  //  "_foto_"
+
+// esto improme un recordatio en la consola para verificar el modelo que se decidio
+print('CONFIRMAR MODELO linea 273' +f+ modelo);
+
+// export exporta el modelo de conectividad escogido a los assets. Este modelo se guardara con el nombre indicado en la carpeta 'conectividad'
+Export.image.toAsset({
+    //la imagen a exportar
+    image: final,
+    // una descripcion 
+    description: sp_+f+modelo+'_conectividad',
+    assetId: 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/conectividad/'+sp_+f+modelo, 
+    region: poli,
+    maxPixels:1e13,
+    scale:250,
+  });
+
+// export exporta el modelo de conectividad escogido al Drive. Este modelo se guardara con el nombre indicado en la carpeta del mismo nombre al area de estudio
+Export.image.toDrive({
+    //la imagen a exportar
+    image: final,
+    // una descripcion 
+    description: sp_+f+modelo+'_drive',
+    folder: areaM_,
+    fileNamePrefix: sp_+f+modelo, 
+    region: poli,
+    scale: 250,
+    maxPixels:1e13,
+  });

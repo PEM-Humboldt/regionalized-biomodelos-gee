@@ -1,0 +1,141 @@
+// spp es una lista que contiene los nombres de todas las especies a las que se les va a realizar la evaluación de fiabilidad
+var spp =[
+'Arremon axillaris',
+'Arremon brunneinucha',
+'Bos taurus',
+'Catharus_fuscescens',
+'Coendou_prehensilis',
+'Felis catus',
+'Herpailurus yagouaroundi',
+'Leopardus_wiedii',
+'Marmosa_robinsoni',
+'Metachirus nudicaudatus',
+'Procyon cancrivorus',
+'Rupornis_magnirostris',
+'Tupinambis_teguixin',
+'Turdus_leucomelas',
+'Mazama_americana',
+'Sciurus_granatensis',
+'Psarocolius_decumanus',
+'Leptotila_verreauxi',
+'Canis_lupus_familiaris',
+'Odocoileus_virginianus',
+'Catharus_ustulatus',
+'Cerdocyon_thous',
+'Cyanocorax_violaceus',
+'Nasua_nasua',
+'Nyctidromus_albicollis',
+'Ortalis_ruficauda',
+'Sapajus_apella',
+'Turdus_ignobilis',
+'Turdus_nudigenis',
+'Cuniculus_paca',
+'Dasypus_novemcinctus',
+'Didelphis_marsupialis',
+'Leopardus_pardalis',
+'Leptotila_rufaxilla',
+'Momotus_momota',
+'Pecari_tajacu',
+'Tamandua_tetradactyla',
+'Aramides_cajaneus',
+'Crotophaga_major',
+'Crypturellus_cinereus',
+'Crypturellus_soui',
+'Dasyprocta_fuliginosa',
+'Zentrygon_linearis',
+'Tinamus_major',
+'Eira_barbara',
+'Myrmecophaga_tridactyla',
+'Galictis_vittata',
+];
+
+//algoritmos es una lista que contiene los nombres de los 4 algoritmos de clasificación usados
+var algoritmos=['MaxEnt','RF','BRT','SVM'];
+
+// aream es el area de estudio que se quiere modelar (Magdalena Medio, Rio Tillava, Piedemonte Meta, Piedemonte Casanare)
+var aream = 'Piedemonte Casanare'  ;
+
+// areaM_ elimina el espacio en el nombre del area
+var areaM_ =aream.replace(' ','');
+
+// corr es una variable en formato texto, que separa si se usaran los datos entrenados
+//de fotorampeto "_foto", o si se usaran los datos entrenados con todos los registros de
+//varios muestreos "_todos"
+var corr= 'foto_'// 'todos_'
+
+// la funcion accuracy evalua las metricas de fiabilidad de todos los algoritmos para las especies en spp
+function accuracy(especie){
+  
+  // sp_ reemplaza los espacios por '_' de la 'sp' 
+  var sp_ =  especie.replace(' ', '_').replace(' ', '_');
+  
+  //valid llama los puntos de validacion para evaluar los modelos
+  var valid = ee.FeatureCollection("users/Biomodelos_Iavh/ecopetrol/"+areaM_+"/ROC/"+corr+sp_+'_ROC');
+  
+//La función ‘fiabilidad’ es una función anidada que calcula distintas métricas de fiabilidad para los modelos de cada 
+// algoritmo de una sola especie, y las entrega en una fila donde cada columna es una métrica
+  function fiabilidad(algorit){
+    
+  //matriz toma los datos de valid y genera una matriz de confusión, especificando entonces que 'presencia' es el dato real,
+  // y algorit es la propiedad del punto que contiene la predicción del algoritmo en cuestión
+    var matriz = valid.errorMatrix('prescencia',algorit);
+    
+  // Basados en la matriz de confusión en ‘matriz’, se calcula la fiabilidad global en ‘accu’, el índice Kappa 
+  // en ‘kappa’, la fiabilidad del productor en ‘pro, y la fiabilidad del consumidor en ‘cons’
+    var accu=   matriz.accuracy();
+    var kappa=  matriz.kappa();
+    var pro=    matriz.producersAccuracy().toList().flatten();
+    var cons=   matriz.consumersAccuracy().toList().flatten();
+    
+    //stat agrupa los resultados de las métricas de fiabilidad en una sola lista.
+    var stat = ee.List( 
+          [algorit+'_global_accu', accu, 
+          algorit+'_Kappa', kappa,
+          algorit+'_produ_accu_omision_0', pro.get(0),
+          algorit+'_produ_accu_omision_1', pro.get(1),
+          algorit+'_user_accu_comision_0', cons.get(0),
+          algorit+'_user_accu_comision_1', cons.get(1)]);
+    
+//ROC_field, ROC_min, ROC_max, ROC_steps, ROC_points son los parámetros definidos para calcular el área bajo la curva de cada modelo. 
+// ROC_field escoge el algoritmo a evaluar (predicciones), ROC_min y  ROC_max definen los límites de la probabilidad 0-1,
+// ROC_steps la cantidad de iteraciones para calcular el AUC, y ROC_points son los puntos usados para verificar (realidad)
+    var ROC_field = algorit, ROC_min = 0, ROC_max = 1, ROC_steps = 100, ROC_points = valid;
+    
+// ROC crea una lista de 100 probabilidades y evalúa la calidad de la clasificación en cada umbral,
+// target_roc filtra los puntos de validación a solo las presencias
+// TPR calcula la sesitividad o TRUE positive rate
+// non_target_roc filtra los puntos de validación a solo las ausencias
+// TNR calcula la especificidad o TRUE positive rate
+// Y regresa una tabla con varias medidas, especificidad, sensitividad, false positive rate y la distribución.
+    var ROC = ee.FeatureCollection(ee.List.sequence(ROC_min, ROC_max, null, ROC_steps).map(function (cutoff) {
+      var target_roc = ROC_points.filterMetadata('prescencia','equals',1);
+      // true-positive-rate, sensitivity  
+      var TPR = ee.Number(target_roc.filterMetadata(ROC_field,'greater_than',cutoff).size()).divide(target_roc.size()); 
+      var non_target_roc = ROC_points.filterMetadata('prescencia','equals',0);
+      // true-negative-rate, specificity  
+      var TNR = ee.Number(non_target_roc.filterMetadata(ROC_field,'less_than',cutoff).size()).divide(non_target_roc.size()) ;
+      return ee.Feature(null,{cutoff: cutoff, TPR: TPR, TNR: TNR, FPR:TNR.subtract(1).multiply(-1),  dist:TPR.subtract(1).pow(2).add(TNR.subtract(1).pow(2)).sqrt()});
+  }));
+  
+//Acá se dibuja la curva usando los valores de FPR como eje X y los de TPR como eje y basado en esa curva calcula el AUC para
+// cada algoritmo usando la aproximación trapezoidaly los guarda en una tabla
+  var X = ee.Array(ROC.aggregate_array('FPR')), 
+      Y = ee.Array(ROC.aggregate_array('TPR')), 
+      Xk_m_Xkm1 = X.slice(0,1).subtract(X.slice(0,0,-1)),
+      Yk_p_Ykm1 = Y.slice(0,1).add(Y.slice(0,0,-1)),
+      AUC = Xk_m_Xkm1.multiply(Yk_p_Ykm1).multiply(0.5).reduce('sum',[0]).abs().toList().get(0);
+  var stat1=stat.add([algorit+'_AUC',AUC]);
+  return stat1.flatten();
+  
+  }
+  
+  //La función regresa la tabla con los datos de la especie evaluada
+  return ee.Feature(ee.Geometry.Point([-22.316098494440755, 9.706472560994428]),
+  ee.Dictionary(ee.List(algoritmos.map(fiabilidad)).flatten())).set({"sp":sp_});
+}
+
+// tabla ejecuta la función ‘accuracy’ para todas las especies en la lista inicial 
+var tabla = ee.FeatureCollection(spp.map(accuracy));
+
+// Se exporta la tabla total a los assets con el nombre de corr '_fiabilidad_por_sp’
+Export.table.toAsset(tabla,'resumen_fiabilidad_todas_spp', 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/'+corr+'fiabilidad_por_sp');

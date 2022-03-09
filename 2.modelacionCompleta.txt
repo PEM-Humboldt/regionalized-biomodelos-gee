@@ -1,0 +1,1020 @@
+// var sp contiene la especie a evaluar
+var sp = 'Odontophorus gujanensis'    ;//
+
+// corr es una variable en formato texto, que separa si se usaran los datos entrenados
+//de fotorampeto "_foto", o si se usaran los datos entrenados con todos los registros de
+//varios muestreos "_todos"
+var corr = 'foto_' ;//'todos_'
+
+// aream es el area de estudio que se quiere modelar (Magdalena Medio, Rio Tillava, Piedemonte Meta, Piedemonte Casanare)
+var aream = 'Magdalena Medio'   ;
+
+/*
+la funcion nombre recibe un registro y cambia e formato de la fecha
+  var fecha extrae el valor de fecha del registro
+  var correcto lo modifica a formato Date
+  return devuelve el registro con la fecha en el formato cambiado
+*/
+function nombre(feat){
+  var fecha = ee.String(feat.get('date'));
+  var correcto = ee.Date.parse('YYYYMM', fecha);
+  return feat.set({"system:time_start": correcto});
+}
+
+// sp_ reemplaza los espacios por '_' de la 'sp' 
+var sp_ =  sp.replace(' ', '_').replace(' ', '_');
+
+// areaM_ elimina el espacio en el nombre del area
+var areaM_ =aream.replace(' ','');
+
+// training contiene los datos entrenados en el paso anterior
+var training = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/training/'+corr+sp_+'_training').map(nombre);
+
+// trainingG contine solo las prescencias de los datos entrenamos
+var trainingG = training.filterMetadata('prescencia','equals',1);
+
+// mascara crea el area de modelamiento usando la funcion 'buffer' sobre los datos de 'trainingG'
+// filtrando la especie en cuestion. y creando uun bufer de 30 km de radio al rededor de cada registro
+var mascara = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/inputs/areas_estudio')
+.filterMetadata('Name', 'equals', aream).geometry().buffer(30000);
+
+
+/*
+Maxent contiene las especificaciones del algoritmo de maxima entropia
+  cada uno de las variables corresponde a un parametro del algrotimo,
+  esta parametrizado con los valores predeterminados
+    .train entrena el algoritmo con los datos de 'training'
+*/
+var MaxEntsp =ee.Classifier.amnhMaxent({
+  // categoricalNames, 
+  outputFormat: 'cloglog', 
+  autoFeature: true, 
+  linear: true, 
+  quadratic:true, 
+  product:true, 
+  // threshold:false, 
+  hinge:true, 
+  hingeThreshold:15, 
+  l2lqThreshold:10, 
+  lq2lqptThreshold:80, 
+  addSamplesToBackground: true, 
+  addAllSamplesToBackground: false, 
+  betaMultiplier:1, 
+  betaHinge:-1, 
+  betaLqp:-1, 
+  betaCategorical:-1, 
+  betaThreshold:-1, 
+  extrapolate:false,//////////////////// 
+  doClamp:false,/////////////////////// 
+  writeClampGrid:false,
+  randomTestPoints:0, 
+  seed:0})
+                .train({features:training.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+                
+                
+// verificar es un punto utilizado posteriormente para guardar el valor de la clasificacion maxent 
+var verificar =ee.FeatureCollection(
+        [ee.Feature(ee.Geometry.Point([-79.90951899024927, 4.2550884401848945]),
+            {"system:index": "0"})]);
+
+// thresimagen, es una funcion que toma un punto de entrenamiento, extrae sus valores, 
+//los convierte en una imagen la cual clasifica segun maxent, y luego extrae el valor de la clasificacion 
+//y lo guarda en el punto verificar.
+//la calsificacion de maxent de solo puntos presenta fallas y es mas confiable clasificar imagenes
+var thresimagen = function(punto){
+  var u = ee.Image(ee.Number(punto.get('NDVI'))).rename(['NDVI']);
+  var u1 = ee.Image(ee.Number(punto.get('EVI'))).rename(['EVI']);
+  var u2 = ee.Image(ee.Number(punto.get('sur_refl_b01'))).rename(['sur_refl_b01']);
+  var u3 = ee.Image(ee.Number(punto.get('sur_refl_b02'))).rename(['sur_refl_b02']);
+  var u4 = ee.Image(ee.Number(punto.get('sur_refl_b03'))).rename(['sur_refl_b03']);
+  var u5 = ee.Image(ee.Number(punto.get('sur_refl_b07'))).rename(['sur_refl_b07']);
+  var u6 = ee.Image(ee.Number(punto.get('dem'))).rename(['dem']);
+  var tu = u.addBands(u1).addBands(u2).addBands(u3).addBands(u4).addBands(u5).addBands(u6).classify(MaxEntsp);
+  return tu.sampleRegions({collection: verificar,scale:1000}).first();
+};
+
+
+// tt ejecuta la funcion thresimagen sobre todos los registros en trainingG, luego selecciona las 
+//probabilidades de cada punto y las ordena de manera ascendente
+var tt= trainingG.map(thresimagen).aggregate_array('probability').sort();
+
+// thres toma la lista de probailidades ordenada de tt y seleccion a la probabilidad correspondiente al percentil 10
+var thres = tt.getNumber(tt.length().divide(10).int());
+
+// num determina el numero de prescencias dividio en 12 meses 
+var num=(trainingG.size().add(12)).divide(training.size());
+
+// t asigna un valor aleatorio a todas las ausencias 
+var t= training.filterMetadata('prescencia','equals',0).randomColumn({seed:9});
+
+// desde t0 hasta t9 divide las ausencias en 10 paquetes diferentes con datos distintos
+// cada uno con una cantidad de ausencias similar a la de prescencias totales
+var t0 = t.filter(ee.Filter.rangeContains('random', num.multiply(0), num.multiply(1)));
+var t1 = t.filter(ee.Filter.rangeContains('random', num.multiply(1), num.multiply(2)));
+var t2 = t.filter(ee.Filter.rangeContains('random', num.multiply(2), num.multiply(3)));
+var t3 = t.filter(ee.Filter.rangeContains('random', num.multiply(3), num.multiply(4)));
+var t4 = t.filter(ee.Filter.rangeContains('random', num.multiply(4), num.multiply(5)));
+var t5 = t.filter(ee.Filter.rangeContains('random', num.multiply(5), num.multiply(6)));
+var t6 = t.filter(ee.Filter.rangeContains('random', num.multiply(6), num.multiply(7)));
+var t7 = t.filter(ee.Filter.rangeContains('random', num.multiply(7), num.multiply(8)));
+var t8 = t.filter(ee.Filter.rangeContains('random', num.multiply(8), num.multiply(9)));
+var t9 = t.filter(ee.Filter.rangeContains('random', num.multiply(9), num.multiply(10)));
+
+// desde tt0 hasta tt9 se crean 10 subsets de datos de entrenamiento con las mismas prescencias 
+// pero con ausencias diferentes
+var tt0= t0.merge(trainingG);
+var tt1= t1.merge(trainingG);
+var tt2= t2.merge(trainingG);
+var tt3= t3.merge(trainingG);
+var tt4= t4.merge(trainingG);
+var tt5= t5.merge(trainingG);
+var tt6= t6.merge(trainingG);
+var tt7= t7.merge(trainingG);
+var tt8= t8.merge(trainingG);
+var tt9= t9.merge(trainingG);
+
+/*
+ranfo contiene el algoritmo de random forest, sus parametros estan definidos por los valores
+  predeterminados de la libreria BioMod
+    .setOutputMode determina que el algoritmo de como resultado valores binarios
+    .train entrena el algoritmo con los datos de entrenamiento del paso anterior
+*/
+var ranfo = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:training.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+// desde ranfo0 hasta ranfo9 se entrenan distintos algoritmos de random forest cada uno con un
+// subset de datos tt0-tt9 como corresponda, resultando en valores binarios
+var ranfo0 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt0.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo1 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt1.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo2 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt2.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo3 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt3.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo4 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt4.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo5 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt5.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo6 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt6.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo7 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt7.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo8 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt8.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo9 = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt9.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+/*
+brt contiene el algoritmo de boosted regresion trees, sus parametros estan definidos por los 
+  valores predeterminados de la libreria BioMod
+    .setOutputMode determina que el algoritmo de como resultado valores binarios
+    .train entrena el algoritmo con los datos de entrenamiento del paso anterior
+*/
+var brt = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:training.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+// desde brt0 hasta brt9 se entrenan distintos algoritmos de boosted regression trees
+//  cada uno con un subset de datos tt0-tt9 como corresponda
+var brt0 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt0.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt1 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt1.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt2 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt2.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt3 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt3.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt9 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt9.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt4 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt4.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt5 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt5.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt6 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt6.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt7 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt7.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt8 = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('CLASSIFICATION')
+                .train({features:tt8.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+  
+
+// ranfoPRO contiene el algoritmo de random forest, sus parametros estan definidos por los valores
+//   predeterminados de la libreria BioMod
+//     .setOutputMode determina que el algoritmo de como resultado valores probabilisticos
+//     .train entrena el algoritmo con los datos de entrenamiento del paso anterior
+var ranfoPRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:training.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+// desde ranfo0 hasta ranfo9 se entrenan distintos algoritmos de random forest cada uno con un
+// subset de datos tt0-tt9 como corresponda, dando resultados PROBABILISTICOS
+var ranfo0PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt0.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo1PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt1.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo2PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt2.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo3PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt3.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo4PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt4.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo5PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt5.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo6PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt6.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo7PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt7.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo8PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt8.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var ranfo9PRO = ee.Classifier.smileRandomForest({
+  numberOfTrees:500,
+  minLeafPopulation:5,
+  bagFraction:0.5,
+  // maxNodes:
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt9.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+// brtPRO contiene el algoritmo de boosted regression trees, sus parametros estan definidos por los valores
+//   predeterminados de la libreria BioMod
+//     .setOutputMode determina que el algoritmo de como resultado valores Probabilisiticos
+//     .train entrena el algoritmo con los datos de entrenamiento del paso anterior
+var brtPRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:training.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+// desde brt0 hasta brt9 se entrenan distintos algoritmos de boosted regression trees
+//  cada uno con un subset de datos tt0-tt9 como corresponda, dando resultados PROBABILISITICOS
+var brt0PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt0.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt1PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt1.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt2PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt2.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt3PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt3.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt9PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt9.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt4PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt4.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt5PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt5.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt6PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt6.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt7PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt7.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+var brt8PRO = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees:2500,
+  shrinkage :0.001,
+  samplingRate :0.5,
+  maxNodes:15,
+  loss:'LeastAbsoluteDeviation'///////////LeastSquares, LeastAbsoluteDeviation, Huber ?????
+  }).setOutputMode('PROBABILITY')
+                .train({features:tt8.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});  
+  
+  
+// data es un valor determinado por el promedio de la varianza de todas las variables predictivas 
+var data=ee.Number(ee.List([
+trainingG.aggregate_total_var('NDVI'),
+trainingG.aggregate_total_var('EVI'),
+trainingG.aggregate_total_var('sur_refl_b01'),
+trainingG.aggregate_total_var('sur_refl_b02'),
+trainingG.aggregate_total_var('sur_refl_b03'),
+trainingG.aggregate_total_var('sur_refl_b07'),
+trainingG.aggregate_total_var('dem')]).reduce(ee.Reducer.mean()));
+
+// gama es un hiperparametro del algoritmo SVM definido por 'data'
+var gama = ee.Number(1).divide(trainingG.size().multiply(data));
+
+/*
+SVM contiene el algoritmo de suport vector machine sus parametros estan definidos por los 
+  valores predeterminados utilizados para modeamiento de especies
+*/
+var SVM = ee.Classifier.libsvm({
+  decisionProcedure:'Voting', //The decision procedure to use for classification. Either 'Voting' or 'Margin'. Not used for regression.
+  svmType:'ONE_CLASS', //The SVM type. One of C_SVC, NU_SVC, ONE_CLASS, EPSILON_SVR or NU_SVR
+  kernelType:'RBF', //The kernel type. One of LINEAR (u′×v), POLY ((γ×u′×v + coef₀)ᵈᵉᵍʳᵉᵉ), RBF (exp(-γ×|u-v|²)) or SIGMOID (tanh(γ×u′×v + coef₀))
+  // shrinking:true,//Whether to use shrinking heuristics
+  // degree:2,//the degree of polynomial. Valid for POLY kernels.
+  gamma: gama,//null,//The gamma value in the kernel function. Defaults to the reciprocal of the number of features. Valid for POLY, RBF and SIGMOID kernels
+  // coef0:1,//The coef₀ value in the kernel function. Defaults to 0. Valid for POLY and SIGMOID kernels.
+  // cost:10,//The cost (C) parameter. Defaults to 1. Only valid for C-SVC, epsilon-SVR, and nu-SVR.
+  // nu: 0.01,//The nu parameter. Defaults to 0.5. Only valid for nu-SVC, one-class SVM, and nu-SVR.
+  // terminationEpsilon:null,//The termination criterion tolerance (e). Defaults to 0.001. Only valid for epsilon-SVR.
+  // lossEpsilon:null,//The epsilon in the loss function (p). Defaults to 0.1. Only valid for epsilon-SVR.
+  oneClass:1//The class of the training data on which to train in a one-class SVM. Defaults to 0. Only valid for one-class SVM. Possible values are 0 and 1. The classifier output is binary (0/1) and will match this class value for the data determined to be in the class.
+  });
+
+// SVMsp es el Support vector machine definido para resultados binarios entrenados con los datos de prescencia
+//  del paso anterior
+var SVMsp =SVM.setOutputMode('CLASSIFICATION')
+                .train({features:trainingG.select(['prescencia','NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']), 
+                classProperty : 'prescencia',
+                inputProperties: ['NDVI','EVI','sur_refl_b01',
+                'sur_refl_b02','sur_refl_b03','sur_refl_b07', 'dem']});
+
+// year es una lista que contiene todos los meses del 2020
+var year = ['2020_01','2020_02','2020_03','2020_04','2020_05','2020_06','2020_07','2020_08',
+            '2020_09','2020_10','2020_11','2020_12'];
+
+/*
+la funcion clasificadores toma cada mes y ejecuta la modelacion de los 4 algoritmos para todos los meses
+  modis_predict selecciona la imagen correspondiente al mes indicado
+  clasMaxEnt clasifica la imagen modis predict con el algoritmo maxent
+  year2 adelanta un mes la fecha inicial
+  spYear filtra los registros solo para el mes indicado
+  len determina el numero de registros del mes
+  umbral escoje la probabilidad del 10 ppor ciento de los registros mensuales y si no hay registros
+    toma el 10 por ciento de los registros totales como umbral para la clasificacion binaria
+  clasSVMsp clasifica la image modis_predict con el algoritmo SVM
+  modeloSvm renombra la clasificacion y lo convierte en tipo byte
+  flag evalua si hay suficientes datos para calcular un Randon forest, o si toca usar el ajuste
+    de datos para casos con pocos registros
+  clasRFsp convierte la imagen clasificada en una imagen binaria formato byte
+  modeloRF renombra la imagen con la fecha indicada y la une con SVM
+  flagbrt evalua si hay suficientes datos para calcular un BRT, o si toca usar el ajuste
+    de datos para casos con pocos registros
+  clasBRTsp emascara las ausencias del modelo y lo convierte en formato byte
+  modeloBRT renombra la calsificacion con el año indicado
+  modelo umbraliza el algoritmo de maxent, lo convierte en formato byte y añade la fecha
+  return entrega una imagen con todas las clasificaciones para todas las fehcas en bandas separadas
+*/
+function clasificadores(anno){
+  var modis_predict = ee.Image('users/Biomodelos_Iavh/ecopetrol/modis/modis_predict_'+anno).clip(mascara);
+  var clasMaxEntsp = modis_predict.classify(MaxEntsp).select('probability');
+  
+  var year2= ee.Date.parse('YYYY_MM',anno).advance(1, 'month').format();
+  var spYear = trainingG.filterDate(anno, year2);
+  
+  
+  var clasSVMsp = modis_predict.classify(SVMsp);
+  var modeloSvm = ee.Image(1).subtract(clasSVMsp).rename('SVM_'+anno).selfMask().byte();
+  
+  var flag = ee.Algorithms.If(trainingG.size().multiply(10).gte(t.size()),modis_predict.classify(ranfo),
+     ee.ImageCollection([modis_predict.classify(ranfo0),
+     modis_predict.classify(ranfo1),
+     modis_predict.classify(ranfo2),
+     modis_predict.classify(ranfo3),
+     modis_predict.classify(ranfo4),
+     modis_predict.classify(ranfo5),
+     modis_predict.classify(ranfo6),
+     modis_predict.classify(ranfo7),
+     modis_predict.classify(ranfo8),
+     modis_predict.classify(ranfo9),
+    ]).mode().round());
+  var clasRFsp = ee.Image(flag).selfMask().byte();
+  var modeloRF = clasRFsp.rename('RF_'+anno).addBands(modeloSvm);
+  
+  var flagbrt = ee.Algorithms.If(trainingG.size().multiply(10).gte(t.size()),modis_predict.classify(brt),
+     ee.ImageCollection([modis_predict.classify(brt0),
+     modis_predict.classify(brt1),
+     modis_predict.classify(brt2),
+     modis_predict.classify(brt3),
+     modis_predict.classify(brt4),
+     modis_predict.classify(brt5),
+     modis_predict.classify(brt6),
+     modis_predict.classify(brt7),
+     modis_predict.classify(brt8),
+     modis_predict.classify(brt9),
+    ]).mode().round());
+  var clasBRTsp = ee.Image(flagbrt).selfMask().byte();
+  var modeloBRT = clasBRTsp.rename('BRT_'+anno);
+  
+  var modelo = clasMaxEntsp.where(clasMaxEntsp.gte(ee.Number(thres)), 1).where(clasMaxEntsp.lt(ee.Number(thres)), 0).rename('MaxEnt_'+anno).byte().selfMask().set({label: anno});
+  return modelo.byte().addBands(modeloRF).addBands(modeloBRT);
+}
+
+// proba clasifica las imagenes mensuales usando los algoritmos con salidas probabilisiticos 
+function proba(anno){
+  
+  // modis_predict toma la imagen modis del mes correspondiente, recorta al area de estudio +buffer
+  var modis_predict = ee.Image('users/Biomodelos_Iavh/ecopetrol/modis/modis_predict_'+anno).clip(mascara);
+  
+  // clasMaxEntsp toma modis_predict y la clasifica usando Maxent con salida probabilisitca
+  var clasMaxEntsp = modis_predict.classify(MaxEntsp).select('probability');
+  
+  // flag evalua si hay suficientes datos para calcular un Random forest Probabilistico, o si toca usar el ajuste
+  // de datos para casos con pocos registros  
+  var flag = ee.Algorithms.If(trainingG.size().multiply(10).gte(t.size()),modis_predict.classify(ranfoPRO),
+   ee.ImageCollection([modis_predict.classify(ranfo0PRO),
+     modis_predict.classify(ranfo1PRO),
+     modis_predict.classify(ranfo2PRO),
+     modis_predict.classify(ranfo3PRO),
+     modis_predict.classify(ranfo4PRO),
+     modis_predict.classify(ranfo5PRO),
+     modis_predict.classify(ranfo6PRO),
+     modis_predict.classify(ranfo7PRO),
+     modis_predict.classify(ranfo8PRO),
+     modis_predict.classify(ranfo9PRO),
+    ]).median());
+  
+  //  clasRFsp toma la imagen clasificada en flag y elimina los pixeles vacion sin clasificar 
+  var clasRFsp = ee.Image(flag).selfMask();
+  
+  //  modeloRF renombra la imagen clasificada por RF con la fecha indicada
+  var modeloRF = clasRFsp.rename('RF_'+anno);
+  
+  // flagbrt evalua si hay suficientes datos para calcular un Random forest Probabilistico, o si toca usar el ajuste
+  // de datos para casos con pocos registros  
+  var flagbrt = ee.Algorithms.If(trainingG.size().multiply(10).gte(t.size()),modis_predict.classify(brtPRO),
+     ee.ImageCollection([modis_predict.classify(brt0PRO),
+     modis_predict.classify(brt1PRO),
+     modis_predict.classify(brt2PRO),
+     modis_predict.classify(brt3PRO),
+     modis_predict.classify(brt4PRO),
+     modis_predict.classify(brt5PRO),
+     modis_predict.classify(brt6PRO),
+     modis_predict.classify(brt7PRO),
+     modis_predict.classify(brt8PRO),
+     modis_predict.classify(brt9PRO),
+    ]).median());
+  
+  //  clasBRTsp toma la imagen clasificada en flag y elimina los pixeles vacion sin clasificar 
+  var clasBRTsp = ee.Image(flagbrt).selfMask();
+  
+  // modeloBRT toma la imagen clasificada BRT, 
+  //renombrandola con la fecha indicada
+  var modeloBRT = clasBRTsp.rename('BRT_'+anno);
+  
+  //modelo toma la imagen clasificada por Maxent y 
+  //la renombra con la fecha indicada, y elimina los pixeles vacion sin clasificar 
+  var modelo = clasMaxEntsp.rename('MaxEnt_'+anno).selfMask().set({label: anno});
+  
+  //finalemnte return regresa la imagem clasificada por Maxent y le añade las clasificaciones de Rf y de BRT
+  return modelo.clip(mascara).addBands(modeloRF).addBands(modeloBRT);
+  }
+  
+  // training tomas los registros en training y ejecuta cambia el formato de la fecha de string a
+  //date para poder usar los filtros de fechas
+  var training = training.map(function (punto){
+    var fecha = ee.Date(punto.get("system:time_start")).format();
+    var correcto = ee.Date.parse("YYYY-MM",ee.String("2020-").cat(fecha.slice(5,7)));
+  return punto.set({"system:time_start": correcto});
+});
+
+// la funcion AUC extrae los valores para ejecutar la validacion de AUC-ROC
+function AUC(anno){
+
+//  year2 adelanta un mes la fecha inicial
+ var year2= ee.Date.parse('YYYY_MM',anno).advance(1, 'month').format();
+ 
+  // spAnual filtra los registros solo para el mes indicado
+  var spAnual = training.filterDate(ee.Date.parse('YYYY_MM',anno).format(), year2);
+
+//validacion, toma los registros filtrados spAnual, extrae sus valores, y los trasnforma en una imagen para clasificar con Maxent
+  var validacion= spAnual.map(function(feat){
+    
+    //feature convierte cada punto en un acoleccion de un solo punto
+      var feature = ee.FeatureCollection(feat);
+      
+      //feature1 convierte el punto en un ciruclo de 50 m de radio
+      var feature1 = ee.FeatureCollection(feat.buffer(50));
+      
+      //modis_predict toma los datos del punto y los convierte en una imagen multibanda
+      var modis_predict =  ee.Image(feature1.reduceToImage({
+            properties: ['NDVI'],
+            reducer: ee.Reducer.first()
+            }).rename(['NDVI']).addBands(feature1.reduceToImage({
+            properties: ['EVI'],
+            reducer: ee.Reducer.first()
+            }).rename(['EVI'])).addBands(feature1.reduceToImage({
+            properties: ['sur_refl_b01'],
+            reducer: ee.Reducer.first()
+            }).rename(['sur_refl_b01'])).addBands(feature1.reduceToImage({
+            properties: ['sur_refl_b02'],
+            reducer: ee.Reducer.first()
+            }).rename(['sur_refl_b02'])).addBands(feature1.reduceToImage({
+            properties: ['sur_refl_b03'],
+            reducer: ee.Reducer.first()
+            }).rename(['sur_refl_b03'])).addBands(feature1.reduceToImage({
+            properties: ['sur_refl_b07'],
+            reducer: ee.Reducer.first()
+            }).rename(['sur_refl_b07'])).addBands(feature1.reduceToImage({
+            properties: ['dem'],
+            reducer: ee.Reducer.first()
+            }).rename(['dem'])));
+            
+      // clasSVMsp clasifica el punto en cuestion segun SVM
+      var clasSVMsp = feature.classify(SVMsp);
+      
+      //SVMnum cuadra la clasificacion para que sea 1 prescencia
+      var SVMnum = ee.Number(1).subtract(ee.Number(clasSVMsp.first().get('classification')));
+      
+      // modeloSvm guarda la caslificacion de SVM como un nuevo atributo en el punto 
+      var modeloSvm = ee.Feature(clasSVMsp.select(['classification','prescencia'],['SVM','prescencia']).first()
+        .set({'SVM':SVMnum}));
+
+        // flag evalua si hay suficientes datos para calcular un Random forest Binario, o si toca usar el ajuste
+        // de datos para casos con pocos registros  
+      var flag = ee.Algorithms.If(trainingG.size().multiply(10).gte(t.size()),
+        ee.Number(feature.classify(ranfo).first().get('classification')),
+        ee.Number(ee.List([ee.Number(feature.classify(ranfo0).first().get('classification')),
+            ee.Number(feature.classify(ranfo1).first().get('classification')),
+            ee.Number(feature.classify(ranfo2).first().get('classification')),
+            ee.Number(feature.classify(ranfo3).first().get('classification')),
+            ee.Number(feature.classify(ranfo4).first().get('classification')),
+            ee.Number(feature.classify(ranfo5).first().get('classification')),
+            ee.Number(feature.classify(ranfo6).first().get('classification')),
+            ee.Number(feature.classify(ranfo7).first().get('classification')),
+            ee.Number(feature.classify(ranfo8).first().get('classification')),
+            ee.Number(feature.classify(ranfo9).first().get('classification'))
+            ]).reduce(ee.Reducer.mode())).round());
+        
+      // clasRFsp añade una nueva propiedad con la clasificacon de RF al punto
+      var clasRFsp = modeloSvm.set({'RF':flag});
+
+        // flagbrt evalua si hay suficientes datos para calcular un BRT Binario, o si toca usar el ajuste
+        // de datos para casos con pocos registros  
+      var flagbrt = ee.Algorithms.If(trainingG.size().multiply(10).gte(t.size()),
+        ee.Number(feature.classify(brt).first().get('classification')),
+        ee.Number(ee.List([ee.Number(feature.classify(brt0).first().get('classification')),
+            ee.Number(feature.classify(brt1).first().get('classification')),
+            ee.Number(feature.classify(brt2).first().get('classification')),
+            ee.Number(feature.classify(brt3).first().get('classification')),
+            ee.Number(feature.classify(brt4).first().get('classification')),
+            ee.Number(feature.classify(brt5).first().get('classification')),
+            ee.Number(feature.classify(brt6).first().get('classification')),
+            ee.Number(feature.classify(brt7).first().get('classification')),
+            ee.Number(feature.classify(brt8).first().get('classification')),
+            ee.Number(feature.classify(brt9).first().get('classification'))
+            ]).reduce(ee.Reducer.mode())).round());
+            
+      // modeloBRT añade una nueva propiedad con la clasificacion de BRT al punto
+      var modeloBRT = clasRFsp.set({'BRT':flagbrt});
+      
+      // clasMaxEntsp1 clasifica la imagen creada segun Maxent y escoje la salida probabilistica
+      var clasMaxEntsp1 = modis_predict.classify(MaxEntsp).select('probability');
+      
+      // modelo toma la clasificacion de maxent clasMaxEntsp1, y le aplica el umbral de thres
+      var modelo = clasMaxEntsp1.where(clasMaxEntsp1.gte(ee.Number(thres)), 1).where(clasMaxEntsp1.lt(ee.Number(thres)), 0);
+      
+      //valid extrae la clasificacion umbralizada de maxent, y la guarda como un nuevo atributo del punto
+      var valid = ee.FeatureCollection(modeloBRT.set({'MaxEnt':ee.Number(ee.Feature(modelo.sampleRegions({
+        collection: feature, properties:[], scale:250, geometries : true}).first()).get('probability'))}));
+        
+      //regturn regresa el punto con las 4 clasificaciones binarias y el valor de prescencia o ausencia original
+      return valid;
+  });
+
+//return regresa toma los registros filtrados spAnual todos con sus clasificaciones binarias
+return  validacion;
+}
+
+
+// coleccion renombra las bandas para que puedan seguir en el codigo, le asigna el prefijo pres, y ejecuta los clasificadores binarios
+var coleccion =ee.ImageCollection(year.map(clasificadores)).toBands().regexpRename('^(.*)', 'pres_$1');
+
+// coleccionprob renombra las bandas para que puedan seguir en el codigo, le asigna el prefijo prob, y ejecuta los clasificadores Probabilisiticos
+var coleccionprob =ee.ImageCollection(year.map(proba)).toBands().regexpRename('^(.*)', 'prob_$1');
+
+// puntosValid y ejecuta la funcion AUC a los puntos ejecuntando los clasificadores binarios
+var puntosValid =ee.FeatureCollection(year.map(AUC)).flatten().flatten();
+
+//probable convierte los valores de probabilidad de las clasificaciones probabilisitcas, y las trasnforma de 0-100
+var probable = coleccionprob.multiply(100).round().int8();
+
+/*
+export exporta la imagen clasificada binaria a los assets
+*/
+Export.image.toAsset({
+    //la imagen a exportar
+    image: coleccion,
+    // una descripcion 
+    description: sp_+'_binario',
+    assetId: 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/binarioMensual/'+corr+sp_+'MX_SVM_RF_BRT', 
+    region: mascara,
+    maxPixels:1e13,
+    scale:250,
+  });
+
+/*
+export exporta la imagen clasificada probabilisitca a los assets
+*/
+Export.image.toAsset({
+    //la imagen a exportar
+    image: probable,
+    // una descripcion 
+    description: sp_+'_probabilistico',
+    assetId: 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/probabilistico/'+corr+sp_+'_MX_SVM_RF_BRT', 
+    region: mascara,
+    maxPixels:1e13,
+    scale:250,
+  });
+
+/*
+export exporta los puntos de evaluacion a los assets
+*/
+Export.table.toAsset({
+  collection:puntosValid,
+  description: sp_+'_AUC',
+  assetId: 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/ROC/'+corr+sp_+'_ROC'
+  });

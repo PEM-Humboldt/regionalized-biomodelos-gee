@@ -1,172 +1,228 @@
-# Regionalized BioModelos: Habitat availability multitemporal models of birds in Colombia 
+---
+title: "regionalized-biomodelos-fibras"
+---
 
-BioModelos is a collaborative online system to map species distributions (Velásquez-Tibata et al, 2019). This repository stores functions to construct habitat availability models of Species (HAM) that are trained and projected multitemporally, from databases gathered, managed and curated by The Alexander Von Humboldt Institute and a network of experts in order to be evaluated and refined. This models use GEE computational capacity, and petabytes-size catalog of satellite information, reducing the modelling time, thus speeding up processing allowing simultaneous modelling for many species, projected in multitude of temporal scenarios.
+# BioModelos Regionalizados: modelos de especies registradas con cámaras trampa para zonas específicas de Colombia 
 
-The functions follows the next sequence (*Puede revisar el flujo de trabajo de este porjecto en la carpeta de imagenes, en el archivo llamado workflow.png*): 
-* First, it needs to standardize the date format
-* Second, it creates the annual MODIS mosaics, from where the models are going to be projected.
-* Third, it creates a training dataset
-* Fourth, it execute 4 different classification algorithms, to produce 4 different binary (presence/absence) maps
-* Fifth, it execute 3 different classification algorithms, to produce 3 different probability maps 
-* Sixth, it shows a general visualization of the binary maps
-* Seventh, it creates a valuation data set, to perform different accuracy assessments on each binary map
-* Eight, it performs the accuracy assessment resulting in a table
-* Ninth, it allows the exportation of either the binary or probabilistic maps into the personal Google Drive
-* Tenth, it calculates the total area for each species, in each year by each algorithm
-* Eleventh, its a Google App that allows to visualize the products.
+BioModelos es un sistema colaborativo en línea para mapear distribuciones de especies (Velásquez-Tibata et al, 2019). Este repositorio almacena las funciones desarrolladas para construir modelos de distribución potencial de especies registradas con cámaras trampa. Estos modelos fueron entrenados y proyectados multitemporalmente (meses), a partir de datos satelitales MODIS y registros obtenidos a través del proyecto fibras usando cámaras trampa principalmente. La integración de las dos fuentes de información se desarrolló usando rutinas de jscript en Google Earth Engine (GEE).
 
-Current state: first version.
+*El flujo de datos y procesos implementados para la obtención de los modelos, tanto en formato de idoneidad de hábitat como distribución potencial, se encuentran sintetizado en la siguiente figura:*
+![](images/flujo.png)
 
-## Prerequisites
+Para ejecutar las funciones se debe seguir la siguiente secuencia:
 
-### Google Earth Engine
+* Verificar que todos los registros tengan el formato de fecha estandarizado de la siguiente forma (Año-mes-día). Por ejemplo: ‘2020-12-16’
+* 1. Crear el dataset de entrenamiento
+* 1.1 crear las imágenes mensuales MODIS para proyectar el modelo (solo toca ejecutar este paso una vez, de resto se puede comentar la parte del código que hace este proceso)
+* 2. Ejecutar la modelación de las especies usando 4 algoritmos distintos (Máxima entropía MaxEnt, Random forest RF, boosted Regression Trees BRT y Support Vector Machine SVM). Esto producirá 3 salidas (mapas binarios, mapas probabilísticos, y tabla de datos para evaluar la fiabilidad de las modelaciones)
+Esto producirá 3 salidas (mapas binarios, mapas probabilísticos, y tabla de datos para evaluar la fiabilidad de las modelaciones)
+* 3. Ejecutar las pruebas de fiabilidad 
+* 4. Generar mapas de idoneidad de hábitat 
+* 5. Generar mapa binario a partir del modelo de idoneidad de hábitat 
+* 6. Generar mapa de riqueza  
 
-these codes were developed in Google Earth Engine (GEE), therefore for its use. the user must have an authorized GEE user.
+Estado Actual: primera versión.
 
-GEE is free only for educational and public research. 
+## Prerrequisitos
 
-This link allows you to learn about GEE: https://earthengine.google.com/
-in the top-rigth corner you can find the "Sing Up" button, where you must register (using a gmail account) and explain how you intend to use GEE. After a revision of you application by the Google team, you will receive an email either authorizing or denying your GEE account (it can be as well an email asking to further explain your intended use of GEE)
+### Google Earth Engine (GEE)
 
-Once you have an authorized GEE user, you can access the GEE API using this link https://code.earthengine.google.com/
+Los siguientes códigos fueron escritos en GEE de modo que para ejecutarlos es indispensable tener un usuario autorizado en dicha plataforma. GEE es de uso gratuito para investigación publica y docencia, y solo algunos casos específicos requieren una licencia.
 
 
-you can access some guides on how to use GEE, with this link: https://developers.google.com/earth-engine/guides/getstarted
+En este link se puede aprender de las generalidades de GEE y conocer a profundidad sus usos y alcances: https://earthengine.google.com/ Para registrarse recuerde dar click en el botón “Sing Up”, y seguir los pasos que le dará la plataforma GEE
+
+Ya teniendo el usuario autorizado se puede acceder al editor de código a través del siguiente link: https://code.earthengine.google.com/
+
+
+En este otro link hay algunas explicaciones de cómo programar en GEE https://developers.google.com/earth-engine/guides/getstarted
 
 
 ### Assets
+Todos los datos subidos y productos generados se guardaran en los “assets” de GEE que es una nube virtual privada (distinta a google Drive o a Google cloud, estos archivos son solo accesibles a través de GEE, no pueden subirse ni descargarse sin usar GEE)
 
-The scripts are written in a way that require a specific file structure. Also you must be careful with the names of the files in the scripts (the scripts have the files names used during the developing stage). You can use the same file names and structure in order to modify the minimum amount of the scripts, or you can change the names and structure, but must remember to modify the file paths in the scripts 
+Es necesario generar las siguientes carpetas cuando vaya a correr las rutinas, ya que en ellas se alamcenaran los resultados generados en cada paso:
 
-**This is the example of the files structure and names used in the sripts**
-
-![](images/assets.png)
-
-In the previous example we created a folder in the assets with the name '*biomodelos_anuales*'
-Then we created seven (7) diferent folders in the assets with the names:
-
-- '*binario*'
-- '*dates*'
-- '*inputs*' (this is the only folder where you are going to put the data, as explained below, the other ones are going to be filled as the scripts are executed)
-- '*modis*'
-- '*proba*'
-- '*training*'
-- '*validacion*'
-
-After that, every folder must be moved inside the '*biomodelos_anuales*' one. And that how you can create the files structure
+* '*Nombre del área de estudio*'
+  * '*ROC*'
+  * '*binario*'
+  * '*binarioMensual*'
+  * '*conectividad*'
+  * '*probabilisitico*'
+  * '*training*'
+* '*inputs*'
+* '*modis*'
+ 
 
 ### Data
 
-Before you start using the scripts, you must have previously prepared and uploaded you data to your GEE Assets.
+Antes de usar los códigos es importante haber subido a GEE los registros de las especies que se desean modelar, siguiendo el formato de fehca mencionado previamente.
 
-The flowing data is the one we used to develop the scripts and it is not public data. However you can find public data and/or use your own. Not all the files here exposed are necessary but if you are not going to use a specific file, must remember to modify you scripts:
+Es importante recordar que los códigos aquí descritos se deben modificar con las rutas de dirección y los nombres de los archivos según el usuario.
 
 **Inputs**
 
-![](images/inputs.png)
+Los siguientes archivos deben ser subidos en la carpeta inputs:
 
-1. alturas_ayerbe: is a table containing 3 different columns: **max** (contains the maximum altitude the species can survive in meters), **min** (contains the minimum altitude the species can survive in meters) and **species** (contains the scientific name the species). *This file is not necessarily required, it is used to filter the altidinaly the observation data*
+1. areas_estudio: es una FeatureCollection que contiene en formato vectorial tipo shape, los polígonos de las áreas de estudio, (cada área debe ser un vector diferente, un multipoligono deberá ser separado en polígonos independientes), este archivo debe tener un atributo (columna) con un nombre de área de estudio estandarizado (sin espacios). (Si el nombre no es estandarizado implicara modificar manualmente todas las direcciones de archivos dentro de los códigos).
 
-2. areas_ave: is a FeatureCollection containing the shapes of the estimated distribution area of each species, each shape must have the attribute **lista_aves** with the scientific name of each species. *This file is required, it is used to create the absence data, and limit the projections* 
-This feature collection is a product derived, in part, from the maps of BirdLife International (BirdLife International and Handbook of the Birds of the World (2020) Bird species distribution maps of the world. Version 2020.1. Available at http://datazone.birdlife.org/species/requestdis. BirdLife International), and local distribution maps, this data its not available to the public.
-
-3. usuario: is the FeatureCollection containing the observation data (points), each point must have at least these 2 attributes **acceptedNameUsage** (contains the scientific name the species) and **fecha** (contains the month when the observation was made its format must be YYYY-MM). *This file is required, it is used to create the multitemporal models, and evaluate the accuracy*
-
-4. neotropico: is a shape of a single vector containing a general terrestrial area that encapsulates all the observation data of all the species. *This file is required, it is used to create the annual mosaics where the models are going to be projected*
+2. registros, es una FeatureCollection que contiene en formato vectorial tipo shape, los puntos dentro de las áreas de estudio, con los registros de las especies, estos registros deben tener los siguientes atributos (columnas):
+    * Nombre científico corectamente escrito: Género + epíteto específico
+    * Fecha en formato estandarizado ‘2020-12-16’ estos registros deben estar separados por área de estudio (de modo que habrá tantos archivos de registros como áreas de estudio), y el nombre de estos archivos debe ser el nombre estandarizado del área de estudio.
 
 
-## How to run
+## Ejecutar
 
-- You must run sequentially the scripts in numerical order. To run a script you must click the run button (in the GEE API) as shown bellow
+- Los códigos deben ser ejecutados de manera secuencial por eso los scripts están numerados.
 
-![](images/run.png)
+- Dentro de cada script hay líneas cometidas, que explican que hace cada comando
 
-- Each script has its instructions and explanations (in Spanish and English) within them as comment lines. 
-- You must wait until each task of each script is completely finished before running the next one. To execute a task you must find the task tab (in the GEE API) click it, then click run as shown bellow
+- Se debe esperar a que las tareas de un script terminen de ser ejecutadas, antes de correr las tareas del siguiente.
+- Hay secciones del código que no se debe correr siempre. Por lo tanto, pueden ser comentadas o no ejecutadas. Estas son:
 
-![](images/task.png)
+  - los Export: Los Export: la mayoría de scripts exportar resultados a los assets o al Drive, cada usuario puede decidir si guarda esos archivos en su drive. Necesariamente, los resultados serán almacenados en sus assets.
+  - Hay secciones del código que generara errores, pero no evitaran que se ejecuten las funciones, (estos errores son más bien advertencias cuando se visualizan los mapas en el panel de mapas). Estas partes del código serán señaladas.
 
-- There are scripts that are not fundamental to the overall work, so if you prefer you can skip them, those are:
-  - 1.Dates_records: this script can be skipped if you data dates are already in format (YYYY-MM) **as text**. (However this script is quite basic and specific, so it may not be enough, sufficient, or functional to every date format. The important thing to remember is that you need your dates as text in the format YYYY-MM).
-  - 6.Visualization: this script is merely a visualization tool, it can be completely skipped. it is used to do a preliminary visual check of the models.
-  - 9.Export: this script just exports the models to Google Drive, if you don't want and/or need the rasters in your Drive, don't use it. However if you don't export then to your drive you wont be able to use them outside of GEE 
+1. Se generaron 2 tipos de modelos con 2 diferentes sets de datos. Los datos de entrenamiento pueden ser registros de foto trampeo exclusivamente "FOTO" o registros de foto trampeo con registros adicionales de otros muestreos "TODOS". Esto permitirá generar los mejores modelos posibles. Igual posteriormente la evaluación permitirá evaluar matemáticamente el rendimiento de los modelos o ser usados para acompañar el criterio experto en el análisis posterior de los modelos.
+  * 1.1 Copiar el código. "1.1 entrenamiento"” en el editor de código de GEE
+  * 1.2 Buscar en el código la parte que dice (cerca de la línea 355:
 
-1. (**OPTIONAL IF YOUR DATES ARE IN THE REQUIRED FORMAT**) copy "*1. Dates_records*" script, and paste it in your code editor in GEE.
-You must check that all the file paths are correct, and that the attributes required in each function is present in your data.
+```java
+/*
+// Esta sección de código, es para exportar las imágenes sobre las cuales se generaran los modelos
+// year determina la fecha de la imagen a exportar, puede ser mes 'xxxx_xx' o año 'xxxx'
+// Modis_predict filtra las imágenes modis de la lista 'modis_interpolado' que coincide con la 
+// fecha indicada
+// export exporta la imagen a los assets
+//activar solo una vez al principio del flujo de trabajo
+var year = '2020_12'; 
+var Modis_predict = ee.ImageCollection(modis_interpolado).filterMetadata('id', "contains", year).median();
+Export.image.toAsset({
+  image: Modis_predict, 
+  description: 'modis_predict'+year, 
+  assetId: 'ecopetrol/modis_predict_'+year,
+  region: colombia, 
+  scale:250, })
+*/
+```
+Para activar el código eliminar las primera y última línea que contienen los símbolos: /* */
+```java
+// Esta sección de código, es para exportar las imágenes sobre las cuales se generaran los modelos
+// year determina la fecha de la imagen a exportar, puede ser mes 'xxxx_xx' o año 'xxxx'
+// Modis_predict filtra las imágenes modis de la lista 'modis_interpolado' que coincide con la 
+// fecha indicada
+// export exporta la imagen a los assets
+//activar solo una vez al principio del flujo de trabajo
+var year = '2020_12'; 
+var Modis_predict = ee.ImageCollection(modis_interpolado).filterMetadata('id', "contains", year).median();
+Export.image.toAsset({
+  image: Modis_predict, 
+  description: 'modis_predict'+year, 
+  assetId: 'ecopetrol/modis_predict_'+year,
+  region: colombia, 
+  scale:250, })
+```
 
-2. run the code for each species, and execute the task in the 'task' tab, these files would have the corrected dates and would be saved in the 'dates' folder in your assets.
+Una vez identificado este bloque de texto, activarlo eliminando la primera línea y la última como se indica en la siguiente imagen:
+  ![](images/borrar.png)
+  
+Una vez activo se deberá cambiar el valor del mes que se quiere como se muestra a continuación y ejecutar el código, este paso se deberá repetir cambiando el valor de la fecha indicada para cada vez que se quiere modelar (en este caso se ejecuta 12 veces por ejemplo para los 12 meses del 2020) Una vez se ejecutaron y guardaron los mosaicos de MODIS que se utilizaran para proyectar los modelos, se debe proceder a comentar este bloque de texto (no se volverá a utilizar) Y continuar con el siguiente paso.
+  ![](images/fecha.png)
+  
+  * 1.3 Ejecutar el código para cada especie, y para cada área de estudio (USANDO LOS REGISTROS DE FOTOTRAMPEO), estos resultados se guardarán en el folder ‘training’, y tendrán el prefijo ‘foto’ significando que estos serán los datos de entrenamiento usando solo los datos de foto trampeo
+  
+  * 1.4 Copiar el código “1b.entrenamineto2” en el editor de código de GEE.
+  * 1.5 Ejecutar el código para cada especie, y para cada área de estudio (USANDO LOS REGISTROS DE FOTOTRAMPEO MAS LOS DE OTROS MUESTREOS), estos resultados se guardaran en el folder ‘training’, y tendrán el prefijo ‘todos’ significando que estos serán los datos de entrenamiento usando los datos de foto trampeo más registros adicionales de otros muestreos
+  
+2. modelar las especies
+  * 2.1 Copiar el código "*2.modelacionCompleta*" en el editor de código de GEE
+  * 2.2 Ejecutar el código para cada especie, en cada área de estudio, con cada uno de los datos de entrenamiento (TODOS y FOTO), este código generara en cada corrida 3 task para ejecutar, uno serán los modelos probabilísticos mensuales (guardados en la carpeta probabilístico), otro los modelos binarios mensuales (guardados en la carpeta binarioMensual) y el otro los datos para evaluar los modelos (guardados en la carpeta ROC). Este código pude demorar unos segundos en generar los 3 tasks
 
-3. copy "*2.Mosaics*" script, and paste it in your code editor in GEE.
+3. Evaluar la fiabilidad o rendimientos de los modelos 
+  * 3.1 Copiar el código '*3.fiabilidad*' en el editor de código de GEE
+  * 3.2 Este código se debe ejecutar para cada área de estudio, con cada uno de los datos de entrenamiento (TODOS y FOTO), es importante recalcar que para cada área de estudio toca cambiar la lista de especies que se van a evaluar, correspondiendo a las especies con registro por área de estudio (es importante recalcar que este código no hace falta ejecutarlo para cada especie, sino solo por área de estudio), esta tabla se guardara en la carpeta de cada área de estudio (al final deben de haber 2 tablas de fiabilidad por área de estudio (TODOS y FOTO))
+  * 3.3 Es importante revisar esa tabla y las métricas de cada modelo para poder seleccionar los modelos adecuados, nuestro criterio para determinar modelos aceptables fue que tuvieran un valor de AUC igual o mayor a 0.7. 
+  
+    Hubo especies que no tuvieron ningún modelo que cumpliera ese requisito, por lo tanto esas especies no se les hizo modelo de conectividad. Así mismo hubo especies con varios modelos que superaban el umbral de 0.7.En esos casos se usó criterio experto para determinar el mejor modelo para cada especie en cada área de estudio (ver el paso siguiente).
 
-4. run the code for each date that you want to project your models, it can be a month or a year. this value must be changed in the variable year in the line 225. Then execute the task in the 'task' tab, these files would have the MODIS mosaics for each date that yo want to project the models on, and would be saved in the 'modis' folder in your assets.
+4.Generar modelo de idoneidad de hábitat o de idoneidad, este código tiene varios detalles que es importante prestar atención para generar correctamente el mapa. Además este código es posible que muestre errores en la consola, pero eso no impide que se genere el mapa, son más bien advertencias.
 
-5. copy '*3.SampleTraining*' script, and paste it in your code editor in GEE.
+  * 4.1 Copiar el código '*4.MapaConec*'en el editor de código de GEE
+  
+  * 4.2 Es importante aclarar que no necesariamente todas las especies registradas con cámaras trampa tuvieron registros adicionales de otros muestreos, de modo que hay especies que solo fueron creados con registros de foto trampeo. En esos casos el código arrojará un error que dice algo similar a estos: 
+```java
+  List (Error)
+  Collection.loadTable: Collection asset 'users/Biomodelos_Iavh/ecopetrol/RioTillava/training/todos_Tapirus_terrestris_training' not found.
+  
+  BRT TODOS: Layer error: Image.load: Image asset 'users/Biomodelos_Iavh/ecopetrol/RioTillava/probabilistico/todos_Tapirus_terrestris_MX_SVM_RF_BRT' not found.
+  
+  registros Todos: Layer error: Collection.loadTable: Collection asset 'users/Biomodelos_Iavh/ecopetrol/RioTillava/training/todos_Tapirus_terrestris_training' not found.
+```
+  
+  Estos errores son advertencias que dicha especie para esa área de estudio no tiene datos de entrenamiento con registros adicionales, de modo que no se generaron los modelos con los datos “TODOS” pero no son errores que generen problemas. Así se verán este tipo de errores en la consola:
+  ![](images/error.png)
+  
+  * 4.3 De forma similar en el panel de capas en esos casos donde no hay modelos con datos “TODOS” aparecerán barras rojas en el administrador de capas, pues como esas capas no existen no pueden mostrarlas. Así se verán este tipo de errores en la consola:
+  ![](images/error2.png)
+  
+        Si nos fijamos bien las capas que dicen TODOS son las que no se muestran y muestran error
+  
+  * 4.4 Este código se tiene que ejecutar AL MENOS 2 VECES por especie, para cada área de estudio.
+  
+    * 4.4.1 Antes de la primera ejecución se deberá revisar la tabla de fiabilidad creada en el paso anterior, para aquellas especies donde solamente hay un modelo aceptable (AUC mayor o igual a 0.7) entonces dicho modelo (BRT, RF, o MaxEnt) deberá ser escrito en la variable “modelo” como se muestra a continuación donde el modelo aceptable es BRT.
+    ![](images/modelo.png)
+    
+    * 4.4.2 La primera ejecución es para visualizar. Siempre es bueno verificar visualmente que el modelo seleccionado es aceptable desde el punto de vista estadístico y ecológico, para eso revisar el panel de capas y comparar el modelo seleccionado vs todos los demás como se muestra a continuación:
+    ![](images/mapa.png)
+    
+          Nótese que el modelo seleccionado es BRT foto, SIEMPRE EL MODELO SELECCIONADO APARECERA EN LA PRIMERA CAPA (si es foto) O EN LA CUARTA CAPA (si es todos) *SIEMPRE EL MODELO SELECCIONAO SERA EL QUE APARECE EN LA CAPA PRIMERA O CUARTA CON MAYUSCULAS EN FOTO Y/O EN TODOS*
+          
+    * 4.4.3 Luego se verifica de nuevo en la consola que el modelo sea el que se quiere exportar, siempre se imprimirá una frase para recordar verificar, en la que se muestra que tipo de modelo es el que se exportara (foto o todos) (BRT, MaxEnt, o RF
+    ![](images/veri.png)  
+    
+          Recuerda verificar en la línea 273 que confirmemos si se desea exportar el modelo "TODOS" o "FOTO", para cambiar en el código según corresponda.
+    ![](images/veri2.png)  
+    
+    * 4.4.4 Una vez verificado el modelo y corregido el código se hará la segunda ejecución para exportar el modelo tanto al drive como a los assets (se recomienda en ambos, pero no es indispensable en el drive)
+    4.4.5 Para especies que tengan ambos tipos de registros tipo FOTO y TODOS el código no debe presentar ningún error, y si toca escoger entre varios modelos buenos, en el panel de mapas se hacen las verificaciones visuales para decidir qué modelo usar con criterio experto. Y finalmente se exporta el modelo, aun así es importante hacer todas las verificaciones del código debe lucir así:
+    
+    ![](images/caso1.png)
+    
+        Nótese las distintas verificaciones que se deben de hacer y que en una especie como la señalada que tiene datos tipo TODOS y FOTO el código no presenta error, además en este caso el modelo seleccionado es tipo TODOS y BRT.
+          
+5.Luego, se debe generar un mapa binario a partir del modelo de idoneidad de hábitat 
 
-6. run the code for each species, and execute the task in the 'task' tab, these files would have the training dataset for each species. These data is going to be multitemporally trained, and would be saved in the 'training' folder in your assets.
+  * 5.1 Copiar el código ’5.BinarioConec’En el editor de código de GEE
+  
+  * 5.2 Este código para ejecutarse se debe verificar que las variables de entrada coincidan con el modelo de idoneidad generado en el paso anterior. Es decir, verificar que si se creó un modelo RF con datos TODOS. Luego, debe especificar esas mismas variables en la rutina.
+  
+        Este código se debe ejecutar por cada especie en cada área de estudio. En el panel de mapas mostrara los registros, el modelo de idoneidad y el binario resultante a partir del umbral determinado por la probabilidad menor de los registros (Mínimo valor de entrenamiento; el umbral se puede verificar en la consola).
+      
+  * 5.3 Este código se debe ejecutar los "exports", no es necesario exportar al drive pero se recomienda hacerlo.
+  
+6. mapa de riqueza
 
-7. copy '*4.Models*' script, and paste it in your code editor in GEE.
+  * 6.1 El mapa de riqueza no tiene un script puntual, porque cada área tiene especies diferentes, entrenados con datos distintos (foto y todos) y con varios algoritmos (BRT, RF, y Maxent) de modo que las direcciones de los archivos varían mucho, y requieren ser modificadas para cada área.
+  
+  * 6.2 Sin embargo para generar el mapa de riqueza simplemente se importan todas las capas binarias y se suman.
 
-8. run the code for each species, and execute the task in the 'task' tab, these files would have the binary classification, of the 4 algorithms, for the last 21 years, for each species. These rasters are going to be  saved in the 'binario' folder in your assets.
-
-9. copy '*5.Probabilistic*' script, and paste it in your code editor in GEE.
-
-10. run the code for each species, and execute the task in the 'task' tab, these files would have the probabilistic classification, of the 3 algorithms, for the last 21 years, for each species. These rasters are going to be  saved in the 'proba' folder in your assets.
-
-11. this is an optional step, It´s function is simply to give a preliminary visualization of the models, to check how they are coming out. To do so, copy '6.Visualization' script, and paste it in your code editor in GEE. Then just tun it with the species you want to visualize 
-
-12. copy '*7. SampleModels*' script, and paste it in your code editor in GEE.
-
-13. run the code for each species, and execute the task in the 'task' tab, these files would have the training data binary classification, of the 4 algorithms (as a feature collection), for the last 21 years, for each species. These feature collections are going to be  saved in the 'validacion' folder in your assets. and would be used to assess the accuracy of the models.
-
-14. copy '*8.Accuracy*' script, and paste it in your code editor in GEE.
-
-15. run the code once an it should execute it for every species in the list. However if there is an error, you might divide the whole list (if it is too long), into sub-list and run the script in batches, and execute the task in the 'task' tab, these file would have the accuracy measurements for all species and save it in the assets.
-
-16. copy '*9.Export*' script, and paste it in your code editor in GEE.
-
-17. run the code once and it should execute it for every species in the list. Its important to notice, that you must be careful with the direction of the images (models), with the names of the bands you want to export, and the names yo want to use to rename them.
-additionally the export function is tricky, nested, and deals with objects from the user and server side. in case present problems you can always export the models with the simple export function, however the purpose of this script is to optimize the exportation.
-
-also you must click every task individually, but there are scripts online (external to GEE) that can help you to click all the task automatically (look for 'Batch execute GEE Export task' from Dongdong Kong)
-
-18.copy '*10.area*' script, and paste it in your code editor in GEE.
-
-19. run the code once and it should execute it for every species in the list and you'll have a feature collection with every area estimate.
-
-## APP
-
-finally there is an online APP developed for easy visualization, you can access it at https://biomodelos-iavh.users.earthengine.app/view/biomodelos
-
-the code behind the app its not required to execute.
-
-However if you want to explore it, there is a copy with comments (in Spanish because our developer team communicates mainly in Spanish), along the code there are comments indicating some images (from the folder 'images' in the folder images in this github), those images would help understand the arquitecture of the APP.
-
-look for '*11.APP*' script
-
-## Authors and contact
+    
+## Autores y contacto
 
 * **Gabriel Alejandro Perilla Suarez, [contacto institucional](mailto:gperilla@humboldt.org.co), [contacto personal](mailto:thealejandroperilla@gmail.com)** 
 
 * **Elkin Alexi Noguera Urbano, [contacto institucional](mailto:enoguera@humboldt.org.co), [contacto personal](mailto:elkalexno@gmail.com)**
 
-* **Luis Hernando Romero Jiménez, [contacto institucional](mailto:lromero@humboldt.org.co), [contacto personal](mailto:lhromeroj@gmail.com)**
 
-* **María Helena Olaya, [contacto institucional](mailto:molaya@humboldt.org.co ), [contacto personal](mailto:olaya42@gmail.com)**
+## Reconocimientos
 
-* **Carlos Jair Muñoz Rodriguez, [contacto institucional](mailto:cmunoz@humboldt.org.co), [contacto personal](mailto:cmunozbiol@gmail.com)**
+Los desarrollos de estas rutinas fueron parcialmente finaciados por Ecopetrol, dentro de la estrategía de monitoreo usando modelos regionalizados en el Proyecto FIBRAS.
 
-* **Cristian Alexander Cruz Rodriguez, [contacto institucional](mailto:ccruz@humboldt.org.co), [contacto personal](cruzrodriguezcristian@gmail.com)** 
+La plataforma BioModelos con los modelos regionalizados, hace parte de las estrategías del Instituto Humboldt, para monitorear especies e identificar la pérdida de hábitat casi en tiempo real.
 
-* **Héctor Manuel Arango Martínez, [contacto institucional](mailto:harango@humboldt.org.co), [contacto personal](hma9327@gmail.com)**
+Los desarrollos fueron particialmente incentivados dentro del proyecto BioModelos para integrar datos de seonsres remotos en Google Earth Engine, con una beca dentro del programa Group on Earth Observations (GEO) - Google Earth Engine (GEE) que proporciona financiamiento para abordar desafíos ambientales y sociales utilizando datos abiertos de la Tierra.
 
+## Licencia
 
+Este proyecto esta licenciado bajo la licencia MIT - revisar el archivo [License.md](License.md) para más detalles
 
-## Acknowledgment
-
-EoData science
-
-BirdLife International and Handbook of the Birds of the World (2020) Bird species distribution maps of the world. Version 2020.1. Available at http://datazone.birdlife.org/species/requestdis.
-
-## License
-
-This project is licensed under the MIT License - see the [License.md](License.md) file for details

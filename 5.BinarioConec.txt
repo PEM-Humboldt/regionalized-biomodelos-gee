@@ -1,0 +1,78 @@
+// sp es la especie que se quiere modelar 
+var sp = 'Cuniculus paca'   ;
+
+// corr es una variable en formato texto, que separa si se usaran los datos entrenados
+//de fotorampeto "_foto", o si se usaran los datos entrenados con todos los registros de
+//varios muestreos "_todos" 
+// SE DEBE VERIFICAR QUE COINCIDA CON LA OPCION (FOTO O TODOS) ESCOGIDO PARA CONECTIVIDAD
+var corr = 'todos'          ;
+
+// aream es el area de estudio que se quiere modelar (Magdalena Medio, Rio Tillava, Piedemonte Meta, Piedemonte Casanare)
+var aream = 'Piedemonte Casanare'   ;
+
+// modelo es la variable que contienen el nombre del algoritmo ESCOGIDO PARA LA CONECTIVIDAD 
+var modelo = 'BRT'          ;
+
+// var sp_ cambia los espacios por '_'
+var sp_ =  sp.replace(' ', '_').replace(' ', '_');
+
+// areaM_ elimina el espacio en el nombre del area
+var areaM_ =aream.replace(' ','');
+
+// imagen llama al modelo de coectividad realizado en el paso anterior
+var imagen = ee.Image('users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/conectividad/'+sp_+'_'+corr+'_'+modelo);
+
+// training llama a los registos de entrenamiento segun corresponda 
+// DEBE COINCIDIR CON LA OPCION (FOTO O TODOS) ESCOGIDO PARA CONECTIVIDAD
+var training = ee.FeatureCollection('users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/training/'+corr+'_'+sp_+'_training');
+
+// trainingG filtra los registos de entrenamiento entrenamiento con presencias
+var trainingG = training.filterMetadata('prescencia','equals',1);
+
+// thresimagen extrae los valores probabilisticos del mapa de conectividad para las prescencias
+var thresimagen = imagen.sampleRegions({
+    collection: trainingG,
+    scale: 250,
+    geometries : false}).aggregate_array('a').sort();
+
+// thres escoge la probabilidad minima donde hay una prescencia como umbral del para el modelo binario
+var thres = thresimagen.get(0);
+
+// se imprime cual es el umbral escogido
+print('umbral escogido: ',thres);
+
+// binario umbraliza el modelo de conectividad, segun el umbral determinado anteriormente
+var binario = imagen.where(imagen.gte(ee.Number(thres)), 1).where(imagen.lt(ee.Number(thres)), 0);
+
+// las siguientes opciones muestran las capas (mapa binario, mapa de conectividad y registros)
+// en el panel de mapas
+Map.setOptions('satellite');
+Map.addLayer(imagen.selfMask(),{min:0,max:100,opacity:1,palette:['000000','00ee28']},'modelo',true);
+Map.addLayer(binario,{opacity:0.6},'binario',true);
+Map.addLayer(trainingG,{color:"ee0000"},'registros');
+
+// export exporta el modelo de conectividad binario a los assets. Este modelo se guardara con el nombre indicado en la carpeta 'binario'
+Export.image.toAsset({
+    //la imagen a exportar
+    image: binario,
+    // una descripcion 
+    description: sp_+'_'+corr+'_'+modelo+'_Conecbinario',
+    assetId: 'users/Biomodelos_Iavh/ecopetrol/'+areaM_+'/binario/'+sp_+'_'+corr+'_'+modelo, 
+    region: binario.geometry(),
+    maxPixels:1e13,
+    scale:250,
+  });
+  
+// export exporta el modelo de conectividad binario al Drive. Este modelo se guardara con el nombre indicado en la carpeta 
+// 'binario' dentro de otra carpeta del mismo nombre al area de estudio
+Export.image.toDrive({
+    //la imagen a exportar
+    image: binario,
+    // una descripcion 
+    description: sp_+'_'+corr+'_'+modelo+'_ConecBinarioDrive',
+    folder: areaM_+'Binario',
+    fileNamePrefix: sp_+'_'+corr+'_'+modelo, 
+    region: binario.geometry(),
+    scale: 250,
+    maxPixels:1e13,
+  });
