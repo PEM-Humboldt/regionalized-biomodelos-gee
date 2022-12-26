@@ -2,9 +2,9 @@
 title: "regionalized-biomodelos-fibras"
 ---
 
-# BioModelos Regionalizados: modelos de especies registradas con cámaras trampa para zonas específicas de Colombia 
+# BioModelos Regionalizados: modelos de distribución calculados para especies registradas a partir del uso de cámaras trampa, con aplicación a zonas específicas de Colombia. 
 
-BioModelos es un sistema colaborativo en línea para mapear distribuciones de especies (Velásquez-Tibata et al, 2019). Este repositorio almacena las funciones desarrolladas para construir modelos de distribución potencial de especies registradas con cámaras trampa. Estos modelos fueron entrenados y proyectados multitemporalmente (meses), a partir de datos satelitales MODIS y registros obtenidos a través del proyecto fibras usando cámaras trampa principalmente. La integración de las dos fuentes de información se desarrolló usando rutinas de jscript en Google Earth Engine (GEE).
+BioModelos es un sistema colaborativo en línea para mapear distribuciones de especies (Velásquez-Tibata et al, 2019), cuya misionalidad es ser el Atlas de la Biodiversidad de Colombia útil para la investigación y toma de decisiones. Este repositorio almacena las funciones implementadas para el calculo de modelos de nicho ecológico y la construcción de modelos de distribución potencial de especies registradas con cámaras trampa. Estos modelos fueron entrenados y proyectados multitemporalmente (meses), a partir de datos satelitales MODIS y registros obtenidos a en campo con cámaras trampa. La integración de las dos fuentes de información se desarrolló usando rutinas de jscript en Google Earth Engine (GEE).
 
 *El flujo de datos y procesos implementados para la obtención de los modelos, tanto en formato de idoneidad de hábitat como distribución potencial, se encuentran sintetizado en la siguiente figura:*
 ![](images/flujo.png)
