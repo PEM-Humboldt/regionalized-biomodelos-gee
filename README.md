@@ -1,5 +1,5 @@
 ---
-title: "regionalized-biomodelos-fibras"
+title: "regionalized-biomodelos-fibras": IDENTIFYING NEAR REAL-TIME LOSS HABITAT ALERTS
 ---
 
 # BioModelos Regionalizados: modelos de distribución calculados para especies con registros y fecha del evento, con aplicación a aves. 
@@ -213,14 +213,28 @@ Una vez activo se deberá cambiar el valor del mes que se quiere como se muestra
 
 * **Elkin Alexi Noguera Urbano, [contacto institucional](mailto:enoguera@humboldt.org.co), [contacto personal](mailto:elkalexno@gmail.com)**
 
+## Colaboradores
+
+* **Carlos Jair Muñoz, [contacto institucional](mailto:cmunoz@humboldt.org.co ), [contacto personal](mailto:cmunoz@humboldt.org.co )** 
+
+* **Luis Romero, [contacto institucional](mailto:lromero@humboldt.org.co ), [contacto personal](mailto:lromero@humboldt.org.co )**
+
+* **Maria Helena Olaya, [contacto institucional](mailto:molaya@humboldt.org.co ), [contacto personal](mailto:molaya@humboldt.org.co )**
+  
+* **Cristian Cruz, [contacto institucional](mailto:ccruz@humboldt.org.co ), [contacto personal](mailto:cruzrodriguezcristian@gmail.com  )**
+
 
 ## Reconocimientos
 
-Los desarrollos de estas rutinas fueron parcialmente finaciados por Ecopetrol, dentro de la estrategía de monitoreo usando modelos regionalizados en el Proyecto FIBRAS.
+Los desarrollos de estas rutinas fueron parcialmente finaciados por Ecopetrol para contrato de una persona experta en GEE, dentro de la estrategía de monitoreo usando modelos regionalizados en el Proyecto FIBRAS.
 
 La plataforma BioModelos con los modelos regionalizados, hace parte de las estrategías del Instituto Humboldt, para monitorear especies e identificar la pérdida de hábitat casi en tiempo real.
 
-Los desarrollos fueron particialmente incentivados dentro del proyecto BioModelos para integrar datos de seonsres remotos en Google Earth Engine, con una beca dentro del programa Group on Earth Observations (GEO) - Google Earth Engine (GEE) que proporciona financiamiento para abordar desafíos ambientales y sociales utilizando datos abiertos de la Tierra.
+Los desarrollos fueron particialmente incentivados dentro del proyecto BioModelos para integrar datos de sesores remotos en Google Earth Engine, con una beca dentro del programa Group on Earth Observations (GEO) - Google Earth Engine (GEE) que proporciona financiamiento para abordar desafíos ambientales y sociales utilizando datos abiertos de la Tierra.
+
+Una aplicación GEE para las aves de Colombia surgió de este desarrollo y puede ser consultada en: [BioModelos GEE](https://biomodelos-iavh.users.earthengine.app/view/biomodelos) 
+
+Mayor información relacionada con el proyecto encuentrala en: [GEO-GEE PROJECT: IDENTIFYING NEAR REAL-TIME LOSS HABITAT ALERTS](https://eodatascience.com/Newsroom/GEO-GEE-project-Identifying-near-real-time-loss-h) 
 
 ## Licencia
 
