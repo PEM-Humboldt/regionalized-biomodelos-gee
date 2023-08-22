@@ -1,7 +1,7 @@
 ---
-title: "regionalized-biomodelos-fibras": IDENTIFYING NEAR REAL-TIME LOSS HABITAT ALERTS
+title: "regionalized-biomodelos-fibras"
 ---
-
+# IDENTIFYING NEAR REAL-TIME LOSS HABITAT ALERTS
 # BioModelos Regionalizados: modelos de distribución calculados para especies con registros y fecha del evento, con aplicación a aves. 
 
 BioModelos es un sistema colaborativo en línea para mapear distribuciones de especies (Velásquez-Tibata et al, 2019), cuya misionalidad es ser el Atlas de la Biodiversidad de Colombia útil para la investigación y toma de decisiones. Este repositorio almacena las funciones implementadas para el calculo de modelos de nicho ecológico y la construcción de modelos de distribución potencial de especies registradas con cámaras trampa. Estos modelos fueron entrenados y proyectados multitemporalmente (meses), a partir de datos satelitales MODIS y registros obtenidos a en campo con cámaras trampa. La integración de las dos fuentes de información se desarrolló usando rutinas de jscript en Google Earth Engine (GEE).
